@@ -1,1 +1,1 @@
-from lsrm import ds, utils
+from tethys-utils import main

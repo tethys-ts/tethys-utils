@@ -7,11 +7,11 @@ import os
 here = os.path.abspath(os.path.dirname(__file__))
 
 # General parameters
-name = 'lsrm'
-main_package = 'lsrm'
+name = 'tethys-utils'
+main_package = 'tethys-utils'
 datasets = 'datasets'
-version = '0.0.5'
-descrip = 'land surface recharge model'
+version = '0.0.1'
+descrip = 'tethys utilities'
 
 # The below code is for readthedocs. To have sphinx/readthedocs interact with
 # the contained package, readthedocs needs to build the package. But the dependencies
@@ -19,7 +19,7 @@ descrip = 'land surface recharge model'
 if os.environ.get('READTHEDOCS', False) == 'True':
     INSTALL_REQUIRES = []
 else:
-    INSTALL_REQUIRES = ['pdsql', 'gistools', 'hydrointerp']
+    INSTALL_REQUIRES = ['zstandard', 'pandas']
 
 # Get the long description from the README file
 with open(os.path.join(here, 'README.rst'), encoding='utf-8') as f:
@@ -79,7 +79,7 @@ setup(
     #
     # This field corresponds to the "Home-Page" metadata field:
     # https://packaging.python.org/specifications/core-metadata/#home-page-optional
-    url='https://github.com/Data-to-Knowledge/lsrm',  # Optional
+    url='https://github.com/tethys-ts/tethys-utils',  # Optional
 
     # This should be your name or the name of the organization which owns the
     # project.
@@ -121,7 +121,7 @@ setup(
     # project page. What does your project relate to?
     #
     # Note that this is a string of words separated by whitespace, not a list.
-    keywords='lsrm',  # Optional
+    keywords='tethys',  # Optional
 
     # You can just specify package directories manually here if your project is
     # simple. Or you can use find_packages().
@@ -161,7 +161,7 @@ setup(
     # If using Python 2.6 or earlier, then these have to be included in
     # MANIFEST.in as well.
     package_data={  # Optional
-        main_package: ['*.yml', datasets + '/*.xz'],
+        main_package: ['*.yml', datasets + '/*.zst'],
     },
 
     # Although 'package_data' is the preferred approach, in some case you may
