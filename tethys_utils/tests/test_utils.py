@@ -86,7 +86,7 @@ def test_df_to_xarray():
 
     ds1 = df_to_xarray(df1, nc_type, param_name, attrs, encoding, run_date_key, ancillary_variables)
 
-    assert (len(ds1) == 6) and (len2 < 30000) and (len1 > 20000)
+    assert (len(ds1) == 6) and (len2 < 30000) and (len2 > 20000)
 
 
 
