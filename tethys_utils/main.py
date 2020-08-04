@@ -57,7 +57,7 @@ def get_last_date(s3_df, default_date='1900-01-01', date_type='date', local_tz=N
     return last_run_date
 
 
-def write_pkl_zstd(obj, file_path=None, compress_level=1):
+def write_pkl_zstd(obj, file_path=None, compress_level=1, pkl_protocol=pickle.HIGHEST_PROTOCOL):
     """
     Serializer using pickle and zstandard. Converts any object that can be pickled to a binary object then compresses it using zstandard. Optionally saves the object to disk. If obj is bytes, then it will only be compressed without pickling.
 
@@ -77,7 +77,7 @@ def write_pkl_zstd(obj, file_path=None, compress_level=1):
     if isinstance(obj, bytes):
         p_obj = obj
     else:
-        p_obj = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+        p_obj = pickle.dumps(obj, protocol=pkl_protocol)
 
     cctx = zstd.ZstdCompressor(level=compress_level)
     c_obj = cctx.compress(p_obj)
