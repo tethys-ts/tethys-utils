@@ -4,7 +4,7 @@ sudo: false
 
 matrix:
   include:
-    - env: ENV_FILE="ci/travis/35-defaults.yaml"
+    - env: ENV_FILE="ci/travis/38-defaults.yaml"
     - env: ENV_FILE="ci/travis/36-defaults.yaml"
     - env: ENV_FILE="ci/travis/37-defaults.yaml"
 
@@ -23,7 +23,7 @@ install:
   - conda list
 
 script:
-  - py.test hilltoppy --cov hilltoppy -v --cov-report term-missing
+  - py.test tethys_utils --cov tethys_utils -v --cov-report term-missing
 
 after_success:
   - codecov
