@@ -2,10 +2,12 @@ name: test
 channels:
   - defaults
 dependencies:
-  - python=3.5
+  - python=3.8
   # required
   - pandas
-  - requests
+  - zstandard
+  - xarray
+  - scipy
   # testing
   - pytest
   - pytest-cov
