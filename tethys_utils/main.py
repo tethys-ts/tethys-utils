@@ -77,7 +77,7 @@ def write_pkl_zstd(obj, file_path=None, compress_level=1):
     if isinstance(obj, bytes):
         p_obj = obj
     else:
-        p_obj = pickle.dumps(obj, protocol=5)
+        p_obj = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
 
     cctx = zstd.ZstdCompressor(level=compress_level)
     c_obj = cctx.compress(p_obj)
