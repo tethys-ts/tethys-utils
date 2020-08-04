@@ -7,6 +7,8 @@ import numpy as np
 import zstandard as zstd
 import pickle
 import pandas as pd
+import copy
+import xarray as xr
 
 #####################################################
 ### Functions
@@ -197,7 +199,7 @@ def df_to_xarray(df, nc_type, param_name, attrs, encoding, run_date_key, ancilla
                     ds2[e] = ds2[e].astype(val['dtype'])
             if 'scale_factor' in val:
                 precision = int(np.abs(np.log10(val['scale_factor'])))
-                ds2[e] = ds2[e].round(precision).values
+                ds2[e] = ds2[e].round(precision)
             ds2[e].encoding = val
 
     for a, val in attrs1.items():

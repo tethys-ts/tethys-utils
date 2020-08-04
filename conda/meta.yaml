@@ -1,6 +1,6 @@
-{% set name = "lsrm" %}
+{% set name = "tethys-utils" %}
 {% set version = "0.0.5" %}
-{% set sha256 = "be7aa56b707ea0d555603001202e469aeeafb08de1f3e1797147007947393e21" %}
+{% set sha256 = "e5966de987bb60c2ef18140f1b5d66e9b9e2c75fea0730c22bb333c467ddba01" %}
 
 # sha256 is the prefered checksum -- you can get it for a file with:
 #  `openssl sha256 <file name>`.
@@ -36,19 +36,20 @@ requirements:
     - setuptools
   run:
     - python
-    - pdsql>=1.2
-    - gistools
-    - hydrointerp
+    - pandas
+    - zstandard
+    - xarray
+    - scipy
 
 test:
   imports:
-    - lsrm.ds
+    - tethys_utils
 
 about:
-  home: https://github.com/Data-to-Knowledge/lsrm
+  home: https://github.com/tethys-ts/tethys-utils
   license: Apache License 2.0
   license_family: APACHE
-  summary: ECan land surface recharge model
-  description: ECan land surface recharge model
-  doc_url: https://github.com/Data-to-Knowledge/lsrm
+  summary: tethys utilities
+  description: tethys utilities
+  doc_url: https://github.com/tethys-ts/tethys-utils
   dev_url: ''

@@ -8,9 +8,9 @@ here = os.path.abspath(os.path.dirname(__file__))
 
 # General parameters
 name = 'tethys-utils'
-main_package = 'tethys-utils'
-datasets = 'datasets'
-version = '0.0.1'
+main_package = 'tethys_utils'
+datasets = 'datasets/time_series'
+version = '0.0.5'
 descrip = 'tethys utilities'
 
 # The below code is for readthedocs. To have sphinx/readthedocs interact with
@@ -19,7 +19,7 @@ descrip = 'tethys utilities'
 if os.environ.get('READTHEDOCS', False) == 'True':
     INSTALL_REQUIRES = []
 else:
-    INSTALL_REQUIRES = ['zstandard', 'pandas']
+    INSTALL_REQUIRES = ['zstandard', 'pandas', 'xarray', 'scipy']
 
 # Get the long description from the README file
 with open(os.path.join(here, 'README.rst'), encoding='utf-8') as f:
@@ -73,7 +73,7 @@ setup(
     #
     # This field corresponds to the "Description" metadata field:
     # https://packaging.python.org/specifications/core-metadata/#description-optional
-    long_description=long_description,  # Optional
+    long_description='',  # Optional
 
     # This should be a valid link to your project's main homepage.
     #
