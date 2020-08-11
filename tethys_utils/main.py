@@ -163,6 +163,8 @@ def df_to_xarray(df, nc_type, param_name, attrs, encoding, run_date_key, ancilla
 
     attrs1 = copy.deepcopy(attrs)
     attrs1.update({'station_id': {'cf_role': "timeseries_id", 'virtual_station': False}, 'lat': {'standard_name': "latitude", 'units': "degrees_north"}, 'lon': {'standard_name': "longitude", 'units': "degrees_east"}, 'time': {'standard_name': 'time', 'long_name': 'start_time'}})
+    if isinstance(ancillary_variables, list):
+        attrs1[param_name].update({'ancillary_variables': ' '.join(ancillary_variables)})
 
     encoding1 = copy.deepcopy(encoding)
     encoding1.update({'time': {'_FillValue': -99999999,'units': "days since 1970-01-01 00:00:00"}, 'lon': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.00001}, 'lat': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.00001}})
