@@ -10,6 +10,12 @@ import pandas as pd
 import copy
 import xarray as xr
 
+####################################################
+### time series types for netcdf
+
+ts_key_pattern = {'H23': 'time_series/{owner}/{feature}/{parameter}/{method}/{processing_code}/{aggregation_statistic}/{frequency_interval}/{utc_offset}/{date}/{site}.H23.nc',
+                  'H25': 'time_series/{owner}/{feature}/{parameter}/{method}/{processing_code}/{aggregation_statistic}/{frequency_interval}/{utc_offset}/{date}.H25.nc'}
+
 #####################################################
 ### Functions
 
