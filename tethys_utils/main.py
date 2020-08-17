@@ -335,3 +335,26 @@ def compare_dfs(old_df, new_df, on):
     dict1 = {'diff': diff_set, 'new': add1, 'remove': rem1}
 
     return dict1
+
+
+def discrete_resample(df, pd_res_code, **kwargs):
+    """
+    Function to properly set up a resampling class for discrete data. This assumes a linear interpolation between data points.
+
+    Parameters
+    ----------
+    df: DataFrame
+        DataFrame with a time index.
+    pd_res_code: str
+        Pandas resampling code. e.g. 'D'.
+    **kwargs
+        Any keyword args passed to Pandas resample.
+
+
+    Returns
+    -------
+    Pandas resampling object
+    """
+    df1 = (df + df.shift(-1))/2
+    out1 = df1.resample(pd_res_code, **kwargs)
+    return out1
