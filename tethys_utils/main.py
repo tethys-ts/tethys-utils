@@ -24,23 +24,42 @@ def list_parse_s3(s3_client, bucket, prefix, start_after='', delimiter='', conti
     """
 
     """
+    if s3_client._endpoint.host == 'https://vault.revera.co.nz':
+        js = []
+        while True:
+            js1 = s3_client.list_objects(Bucket=bucket, Prefix=prefix, Marker=start_after, Delimiter=delimiter)
 
-    js = []
-    while True:
-        js1 = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix, StartAfter=start_after, Delimiter=delimiter, ContinuationToken=continuation_token)
-
-        if 'Contents' in js1:
-            js.extend(js1['Contents'])
-            if 'NextContinuationToken' in js1:
-                continuation_token = js1['NextContinuationToken'].replace('%3B', ';')
+            if 'Contents' in js1:
+                js.extend(js1['Contents'])
+                if 'NextMarker' in js1:
+                    start_after = js1['NextMarker']
+                else:
+                    break
             else:
                 break
-        else:
-            break
 
-    if 'Contents' in js1:
-        f_df1 = pd.DataFrame(js).drop('StorageClass', axis=1)
-        f_df1['KeyDate'] = pd.to_datetime(f_df1.Key.str.findall('\d\d\d\d\d\d\d\dT\d\d\d\d\d\dZ').apply(lambda x: x[0]), utc=True, errors='coerce')
+    else:
+
+        js = []
+        while True:
+            js1 = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix, StartAfter=start_after, Delimiter=delimiter, ContinuationToken=continuation_token)
+
+            if 'Contents' in js1:
+                js.extend(js1['Contents'])
+                if 'NextContinuationToken' in js1:
+                    continuation_token = js1['NextContinuationToken']
+                else:
+                    break
+            else:
+                break
+
+    if js:
+        f_df1 = pd.DataFrame(js).drop(['StorageClass', 'Owner'], axis=1)
+        try:
+            f_df1['KeyDate'] = pd.to_datetime(f_df1.Key.str.findall('\d\d\d\d\d\d\d\dT\d\d\d\d\d\dZ').apply(lambda x: x[0]), utc=True, errors='coerce')
+        except:
+            print('No dates to parse in Keys')
+            f_df1['KeyDate'] = None
         f_df1['ETag'] = f_df1['ETag'].str.replace('"', '')
     else:
         f_df1 = pd.DataFrame(columns=['Key', 'LastModified', 'ETag', 'Size', 'KeyDate'])
