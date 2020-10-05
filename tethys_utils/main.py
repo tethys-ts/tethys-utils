@@ -54,7 +54,7 @@ def list_parse_s3(s3_client, bucket, prefix, start_after='', delimiter='', conti
                 break
 
     if js:
-        f_df1 = pd.DataFrame(js).drop(['StorageClass', 'Owner'], axis=1)
+        f_df1 = pd.DataFrame(js)[['Key', 'LastModified', 'ETag', 'Size']].copy()
         try:
             f_df1['KeyDate'] = pd.to_datetime(f_df1.Key.str.findall('\d\d\d\d\d\d\d\dT\d\d\d\d\d\dZ').apply(lambda x: x[0]), utc=True, errors='coerce')
         except:
