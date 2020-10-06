@@ -1,6 +1,6 @@
 {% set name = "tethys-utils" %}
-{% set version = "0.0.12" %}
-{% set sha256 = "b2b2525d904d679b976a07f7f7409c52b7a34d664f05a918da786be3014c5c7d" %}
+{% set version = "0.0.15" %}
+{% set sha256 = "0c4918954593bae98079e12f2cd4770d9436aa166b6f3cc48769d2e1835c2a10" %}
 
 # sha256 is the prefered checksum -- you can get it for a file with:
 #  `openssl sha256 <file name>`.
@@ -40,6 +40,7 @@ requirements:
     - zstandard
     - xarray
     - scipy
+    - boto3
 
 test:
   imports:

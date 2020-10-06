@@ -9,6 +9,8 @@ import pickle
 import pandas as pd
 import copy
 import xarray as xr
+import boto3
+import botocore
 
 ####################################################
 ### time series types for netcdf
@@ -18,6 +20,39 @@ ts_key_pattern = {'H23': 'time_series/{owner}/{feature}/{parameter}/{method}/{pr
 
 #####################################################
 ### Functions
+
+
+def s3_connection(conn_config, max_pool_connections=20):
+    """
+    Function to establish a connection with an S3 account. This can use the legacy connect (signature_version s3) and the curent version.
+
+    Parameters
+    ----------
+    conn_config : dict
+        A dictionary of the connection info necessary to establish an S3 connection.
+    max_pool_connections : int
+        The number of simultaneous connections for the S3 connection.
+
+    Returns
+    -------
+    S3 client object
+    """
+    s3_config = copy.deepcopy(conn_config)
+
+    if 'config' in s3_config:
+        config0 = s3_config.pop('config')
+        config0.update({'max_pool_connections': max_pool_connections})
+        config1 = boto3.session.Config(**config0)
+
+        s3_config1 = s3_config.copy()
+        s3_config1.update({'config': config1})
+
+        s3 = boto3.client(**s3_config1)
+    else:
+        s3_config.update({'config': botocore.config.Config(max_pool_connections=max_pool_connections)})
+        s3 = boto3.client(**s3_config)
+
+    return s3
 
 
 def list_parse_s3(s3_client, bucket, prefix, start_after='', delimiter='', continuation_token=''):
