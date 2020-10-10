@@ -218,9 +218,9 @@ def df_to_xarray(df, nc_type, param_name, attrs, encoding, run_date_key, ancilla
 
     # Make sure station_id data type is a str
     if 'station_id' in df.columns:
-        if df['station_id'].dtype != np.dtype(str):
+        if np.issubdtype(df['station_id'].dtype, np.number):
             print('station_id is a ' + df.station_id.dtype.name + '. It will be converted to a string.' )
-            df['station_id'] = df['station_id'].astype(str)
+            df['station_id'] = df['station_id'].astype(int).astype(str)
 
     ## Process DataFrame
     site_cols = list(df.columns[~(df.columns.isin(data_cols) | (df.columns == 'time'))])
