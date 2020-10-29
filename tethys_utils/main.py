@@ -13,6 +13,7 @@ import boto3
 import botocore
 import smtplib
 import ssl
+from pandas.core.groupby import SeriesGroupBy, GroupBy
 
 ####################################################
 ### time series types for netcdf
@@ -294,7 +295,7 @@ def df_to_xarray(df, nc_type, param_name, attrs, encoding, run_date_key, ancilla
         return ds2
 
 
-def grp_ts_agg(df, grp_col, ts_col, freq_code, discrete=False, **kwargs):
+def grp_ts_agg(df, grp_col, ts_col, freq_code, agg_fun, discrete=False, **kwargs):
     """
     Simple function to aggregate time series with dataframes with a single column of sites and a column of times.
 
@@ -302,7 +303,7 @@ def grp_ts_agg(df, grp_col, ts_col, freq_code, discrete=False, **kwargs):
     ----------
     df : DataFrame
         Dataframe with a datetime column.
-    grp_col : str or list of str
+    grp_col : str, list of str, or None
         Column name that contains the sites.
     ts_col : str
         The column name of the datetime column.
@@ -313,24 +314,57 @@ def grp_ts_agg(df, grp_col, ts_col, freq_code, discrete=False, **kwargs):
 
     Returns
     -------
-    Pandas resample object
+    Pandas DataFrame
     """
 
     df1 = df.copy()
-    if type(df[ts_col].iloc[0]) is pd.Timestamp:
-        df1.set_index(ts_col, inplace=True)
-        if isinstance(grp_col, str):
-            grp_col = [grp_col]
+    if isinstance(df, pd.DataFrame):
+        if df[ts_col].dtype.name == 'datetime64[ns]':
+            df1.set_index(ts_col, inplace=True)
+            if grp_col is None:
+
+                if discrete:
+                    df3 = discrete_resample(df1, freq_code, agg_fun, **kwargs)
+                else:
+                    df3 = df1.resample(freq_code, **kwargs).agg(agg_fun)
+
+                return df3
+
+            elif isinstance(grp_col, str):
+                grp_col = [grp_col]
+            elif isinstance(grp_col, list):
+                grp_col = grp_col[:]
+            else:
+                raise TypeError('grp_col must be a str, list, or None')
+
+            if discrete:
+                val_cols = [c for c in df1.columns if c not in grp_col]
+
+                grp1 = df1.groupby(grp_col)
+
+                grp_list = []
+
+                for i, r in grp1:
+                    s6 = discrete_resample(r[val_cols], freq_code, agg_fun, **kwargs)
+                    s6[grp_col] = i
+
+                    grp_list.append(s6)
+
+                df2 = pd.concat(grp_list)
+                df2.index.name = ts_col
+
+                df3 = df2.reset_index().set_index(grp_col + [ts_col]).sort_index()
+
+            else:
+                grp_col.extend([pd.Grouper(freq=freq_code, **kwargs)])
+                df3 = df1.groupby(grp_col).agg(agg_fun)
+
+            return df3
+
         else:
-            grp_col = grp_col[:]
-        if discrete:
-            val_cols = [c for c in df1.columns if c not in grp_col]
-            df1[val_cols] = (df1[val_cols] + df1[val_cols].shift(-1))/2
-        grp_col.extend([pd.Grouper(freq=freq_code, **kwargs)])
-        df_grp = df1.groupby(grp_col)
-        return (df_grp)
+            raise ValueError('Make one column a timeseries!')
     else:
-        print('Make one column a timeseries!')
+        raise TypeError('The object must be a DataFrame')
 
 
 def compare_dfs(old_df, new_df, on):
@@ -399,27 +433,43 @@ def compare_dfs(old_df, new_df, on):
     return dict1
 
 
-def discrete_resample(df, pd_res_code, **kwargs):
+def discrete_resample(df, freq_code, agg_fun, **kwargs):
     """
     Function to properly set up a resampling class for discrete data. This assumes a linear interpolation between data points.
 
     Parameters
     ----------
-    df: DataFrame
-        DataFrame with a time index.
-    pd_res_code: str
-        Pandas resampling code. e.g. 'D'.
+    df: DataFrame or Series
+        DataFrame or Series with a time index.
+    freq_code: str
+        Pandas frequency code. e.g. 'D'.
+    agg_fun : str
+        The aggregation function to be applied on the resampling object.
     **kwargs
         Any keyword args passed to Pandas resample.
 
-
     Returns
     -------
-    Pandas resampling object
+    Pandas DataFrame or Series
     """
-    df1 = (df + df.shift(-1))/2
-    out1 = df1.resample(pd_res_code, **kwargs)
-    return out1
+    if isinstance(df, (pd.Series, pd.DataFrame)):
+        if isinstance(df.index, pd.DatetimeIndex):
+            reg1 = pd.date_range(df.index[0].ceil(freq_code), df.index[-1].floor(freq_code), freq=freq_code)
+            reg2 = reg1[~reg1.isin(df.index)]
+            s1 = pd.DataFrame(np.nan, index=reg2, columns=val_cols)
+            s2 = pd.concat([df, s1]).sort_index()
+            s3 = s2.interpolate('time')
+            s4 = (s3 + s3.shift(-1))/2
+            s5 = s4.resample(freq_code, **kwargs).agg(agg_fun).dropna()
+
+            index1 = r.index.floor(freq_code).unique()
+            s6 = s5[s5.index.isin(index1)].copy()
+        else:
+            raise ValueError('The index must be a datetimeindex')
+    else:
+        raise TypeError('The object must be either a DataFrame or a Series')
+
+    return s6
 
 
 def email_msg(sender_address, sender_password, receiver_address, subject, body):
@@ -460,10 +510,46 @@ def email_msg(sender_address, sender_password, receiver_address, subject, body):
         server.sendmail(sender_address, receiver_address, msg)
 
 
+def tsreg(ts, freq=None, interp=False):
+    """
+    Function to regularize a time series object (pandas).
+    The first three indeces must be regular for freq=None!!!
+
+    Parameters
+    ----------
+    ts : DataFrame
+        pandas time series dataframe.
+    freq : str or None
+        Either specify the known frequency of the data or use None and
+    determine the frequency from the first three indices.
+    interp : bool
+        Should linear interpolation be applied on all missing data?
+
+    Returns
+    -------
+    DataFrame
+    """
+
+    if freq is None:
+        freq = pd.infer_freq(ts.index[:3])
+    ts1 = ts.resample(freq).mean()
+    if interp:
+        ts1 = ts1.interpolate('time')
+
+    return ts1
 
 
-
-
+# def pd_groupby_fun(fun_name, df):
+#     """
+#     Function to make a function specifically to be used on pandas groupby objects from a string code of the associated function.
+#     """
+#     if isinstance(df, pd.Series):
+#         fun1 = SeriesGroupBy.__dict__[fun_name]
+#     elif isinstance(df, pd.DataFrame):
+#         fun1 = GroupBy.__dict__[fun_name]
+#     else:
+#         raise ValueError('df should be either a Series or DataFrame.')
+#     return fun1
 
 
 
