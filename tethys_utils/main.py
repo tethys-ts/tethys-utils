@@ -13,8 +13,6 @@ import boto3
 import botocore
 import smtplib
 import ssl
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 ####################################################
 ### time series types for netcdf
@@ -424,7 +422,7 @@ def discrete_resample(df, pd_res_code, **kwargs):
     return out1
 
 
-def email_failure(sender_address, sender_password, receiver_address, subject, body):
+def email_msg(sender_address, sender_password, receiver_address, subject, body):
     """
     Function to send a simple email using gmail smtp.
 
@@ -449,8 +447,7 @@ def email_failure(sender_address, sender_password, receiver_address, subject, bo
     port = 465  # For SSL
     smtp_server = "smtp.gmail.com"
 
-    msg_base = """\
-    Subject: {subject}
+    msg_base = """Subject: {subject}\n
     {body}"""
 
     msg = msg_base.format(subject=subject, body=body)
