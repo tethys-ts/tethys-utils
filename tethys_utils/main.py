@@ -11,6 +11,10 @@ import copy
 import xarray as xr
 import boto3
 import botocore
+import smtplib
+import ssl
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 ####################################################
 ### time series types for netcdf
@@ -418,3 +422,59 @@ def discrete_resample(df, pd_res_code, **kwargs):
     df1 = (df + df.shift(-1))/2
     out1 = df1.resample(pd_res_code, **kwargs)
     return out1
+
+
+def email_failure(sender_address, sender_password, receiver_address, subject, body):
+    """
+    Function to send a simple email using gmail smtp.
+
+    Parameters
+    ----------
+    sender_address : str
+        The email address of the account that is sending the email.
+    sender_password : str
+        The password of the sender account.
+    receiver_address : str or list of str
+        The email addresses of the recipients.
+    subject: str
+        The subject of the email.
+    body : str
+        The main body of the email.
+
+    Returns
+    -------
+    None
+
+    """
+    port = 465  # For SSL
+    smtp_server = "smtp.gmail.com"
+
+    msg_base = """\
+    Subject: {subject}
+    {body}"""
+
+    msg = msg_base.format(subject=subject, body=body)
+
+    # Create a secure SSL context
+    context = ssl.create_default_context()
+
+    with smtplib.SMTP_SSL(smtp_server, port, context=context) as server:
+        server.login(sender_address, sender_password)
+        server.sendmail(sender_address, receiver_address, msg)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
