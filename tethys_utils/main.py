@@ -21,6 +21,11 @@ from pandas.core.groupby import SeriesGroupBy, GroupBy
 ts_key_pattern = {'H23': 'time_series/{owner}/{feature}/{parameter}/{method}/{processing_code}/{aggregation_statistic}/{frequency_interval}/{utc_offset}/{date}/{site}.H23.nc',
                   'H25': 'time_series/{owner}/{feature}/{parameter}/{method}/{processing_code}/{aggregation_statistic}/{frequency_interval}/{utc_offset}/{date}.H25.nc'}
 
+####################################################
+### Mappings
+
+agg_stat_mapping = {'mean': 'mean', 'cumulative': 'sum', 'continuous': None, 'maximum': 'max', 'median': 'median', 'minimum': 'min', 'mode': 'mode', 'sporadic': None, 'standard_deviation': 'std', 'incremental': 'cumsum'}
+
 #####################################################
 ### Functions
 
@@ -411,8 +416,8 @@ def compare_dfs(old_df, new_df, on):
         isnull1 = new_set[c].isnull()
         if isnull1.any():
             new_set.loc[new_set[c].isnull(), c] = np.nan
-        if old_set[c].dtype.name == 'float64':
-            c1 = ~np.isclose(old_set[c], new_set[c])
+        if old_set[c].dtype.type in (np.float32, np.float64):
+            c1 = ~np.isclose(old_set[c], new_set[c], equal_nan=True)
         elif old_set[c].dtype.name == 'object':
             new_set[c] = new_set[c].astype(str)
             c1 = old_set[c].astype(str) != new_set[c]
