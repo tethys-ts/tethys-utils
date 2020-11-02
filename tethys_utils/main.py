@@ -461,13 +461,13 @@ def discrete_resample(df, freq_code, agg_fun, **kwargs):
         if isinstance(df.index, pd.DatetimeIndex):
             reg1 = pd.date_range(df.index[0].ceil(freq_code), df.index[-1].floor(freq_code), freq=freq_code)
             reg2 = reg1[~reg1.isin(df.index)]
-            s1 = pd.DataFrame(np.nan, index=reg2, columns=val_cols)
+            s1 = pd.DataFrame(np.nan, index=reg2, columns=df.columns)
             s2 = pd.concat([df, s1]).sort_index()
             s3 = s2.interpolate('time')
             s4 = (s3 + s3.shift(-1))/2
             s5 = s4.resample(freq_code, **kwargs).agg(agg_fun).dropna()
 
-            index1 = r.index.floor(freq_code).unique()
+            index1 = df.index.floor(freq_code).unique()
             s6 = s5[s5.index.isin(index1)].copy()
         else:
             raise ValueError('The index must be a datetimeindex')
