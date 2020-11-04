@@ -2,11 +2,13 @@
 Created by Mike Kittridge on 2020-11-02.
 
 For hashing the geometry of sites, use blake2b with a digest_size of 12.
+Similar for the dataset_id, except that the first 8 fields (starting with feature) should be used for the hashing.
 """
 from datetime import datetime, date
 from typing import List, Optional, Dict, Union
 from pydantic import BaseModel, Field
-from hashlib import blake2b
+# from hashlib import blake2b
+import orjson
 
 
 #########################################
@@ -32,21 +34,34 @@ class Geometry(BaseModel):
     coordinates: List[float]
 
 
+class TimeSeriesObjectInfo(BaseModel):
+    """
+    S3 time series object and associated metadata.
+    """
+    key: str
+    bucket: str
+    content_length: int
+    etag: str
+    run_date: datetime
+    modified_date: datetime = Field(..., description='The modification date of the last edit.')
+
+
+
 class Site(BaseModel):
     """
     Contains the site data of a dataset.
     """
-    site_id: str = Field(..., description='site uuid')
+    dataset_id: str = Field(..., description='The unique dataset uuid.')
+    site_id: str = Field(..., description='site uuid based on the geometry')
     ref: str = None
     name: str = None
     osm_id: int = None
     virtual_site: bool
     geometry: Geometry
     altitude: float = None
-    stats: Stats = None
-    time_series_object_list: List = None
+    stats: Stats
+    time_series_object_info: TimeSeriesObjectInfo
     properties: Dict = Field(None, description='Any additional site specific properties.')
-    modified_date: datetime = Field(None, description='The modification date of the last edit.')
 
 
 class Dataset(BaseModel):
@@ -75,28 +90,53 @@ class Dataset(BaseModel):
     modified_date: datetime = Field(None, description='The modification date of the last edit.')
 
 
+class DatasetBase(BaseModel):
+    """
+    Core fields in the dataset.
+    """
+    feature: str = Field(..., description='The hydrologic feature associated with the dataset.')
+    parameter: str = Field(..., description='The recorded observation parameter.')
+    method: str = Field(..., description='The way the recorded observation was obtained.')
+    processing_code: str = Field(..., description='The code associated with the processing state of the recorded observation.')
+    owner: str = Field(..., description='The operator, owner, and/or producer of the associated data.')
+    aggregation_statistic: str = Field(..., description='The statistic that defines how the result was calculated. The aggregation statistic is calculated over the time frequency interval associated with the recorded observation.')
+    frequency_interval: str = Field(..., description='The frequency that the observation was recorded at. In the form 1H for hourly.')
+    utc_offset: str = Field(..., description='The offset time from UTC associated with the frequency_interval. For example, if data was collected daily at 9:00, then the frequency_interval would be 24H and the utc_offset would be 9H. The offset must be smaller than the frequency_interval.')
+
+
 class Result(BaseModel):
     """
     A normal time series result.
     """
-    site_id: str = Field(..., description='site uuid')
     dataset_id: str = Field(..., description='The unique dataset uuid.')
+    site_id: str = Field(..., description='site uuid')
     from_date: Union[datetime, date] = Field(..., description='The start datetime of the observation.')
     result: Union[str, int, float] = Field(..., description='The recorded observation parameter.')
+    quality_code: str = Field(None, description='The censor_code of the observation. E.g. > or <')
     censor_code: str = Field(None, description='The censor_code of the observation. E.g. > or <')
     properties: Dict = Field(None, description='Any additional result specific properties.')
     modified_date: datetime = Field(None, description='The modification date of the last edit.')
 
 
+############################################
+### Testing
 
-
-
-
-
-
-
-
-
+# import fastjsonschema
+#
+# site_schema = Site.schema()
+#
+# geometry = {'type': 'Point', 'coordinates': [10000.2334, 344532.3451]}
+#
+# site_dict = dict(site_id='123', virtual_site=False, geometry=geometry)
+#
+# site1 = Site(**site_dict)
+#
+# Site(site_id='123', virtual_site=False, geometry=geometry).dict(exclude_none=True)
+#
+#
+# val1 = fastjsonschema.compile(site_schema)
+#
+# val1(site_dict)
 
 
 
