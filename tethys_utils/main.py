@@ -20,26 +20,26 @@ from time import sleep
 import traceback
 import requests
 from hashlib import blake2b
-from tethys_utils.data_models import Geometry, Dataset, DatasetBase, TimeSeriesObjectInfo, Site
+from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats
 from geojson import Point
 
 ####################################################
 ### Misc reference objects
 
-# nc_ts_key_pattern = {'H23': 'time_series/{owner}/{feature}/{parameter}/{method}/{processing_code}/{aggregation_statistic}/{frequency_interval}/{utc_offset}/{date}/{site}.H23.nc',
+# nc_ts_key_pattern = {'H23': 'time_series/{owner}/{feature}/{parameter}/{method}/{processing_code}/{aggregation_statistic}/{frequency_interval}/{utc_offset}/{date}/{station}.H23.nc',
                   # 'H25': 'time_series/{owner}/{feature}/{parameter}/{method}/{processing_code}/{aggregation_statistic}/{frequency_interval}/{utc_offset}/{date}.H25.nc'}
 
 nc_ts_key_pattern = {
-                    'H23': 'tethys/diff/{dataset_id}/{date}/{site_id}.H23.nc.zst',
+                    'H23': 'tethys/diff/{dataset_id}/{date}/{station_id}.H23.nc.zst',
                     'H25': 'tethys/diff/{dataset_id}/{date}.H25.nc.zst'
                     }
 
-key_patterns = {'ts': 'tethys/latest/{dataset_id}/{site_id}/ts_data.nc.zst',
+key_patterns = {'ts': 'tethys/latest/{dataset_id}/{station_id}/ts_data.nc.zst',
                 'dataset': 'tethys/latest/datasets.json',
-                'site': 'tethys/latest/{dataset_id}/sites.json.zst'
+                'station': 'tethys/latest/{dataset_id}/stations.json.zst'
                 }
 
-base_ds_fields = ['feature', 'parameter', 'method', 'processing_code', 'owner', 'aggregation_statistic', 'frequency_interval', 'utc_offset']
+base_ds_fields = ['feature', 'parameter', 'method', 'product_code', 'owner', 'aggregation_statistic', 'frequency_interval', 'utc_offset']
 
 ####################################################
 ### Mappings
@@ -223,7 +223,7 @@ def df_to_xarray(df, nc_type, param_name, attrs, encoding, run_date_key, ancilla
     data_cols.extend([param_name])
 
     essential_list = [param_name, 'time', 'lat', 'lon', 'station_id']
-    no_attrs_list = ['station_name']
+    no_attrs_list = ['ref', 'name', 'modified_date']
 
     df_cols = list(df.columns)
 
@@ -251,17 +251,26 @@ def df_to_xarray(df, nc_type, param_name, attrs, encoding, run_date_key, ancilla
             df['station_id'] = df['station_id'].astype(int).astype(str)
 
     ## Process DataFrame
-    site_cols = list(df.columns[~(df.columns.isin(data_cols) | (df.columns == 'time'))])
+    station_cols = list(df.columns[~(df.columns.isin(data_cols) | (df.columns == 'time'))])
 
-    print('These are the site columns: ' + ', '.join(site_cols))
+    print('These are the station columns: ' + ', '.join(station_cols))
 
     attrs1 = copy.deepcopy(attrs)
     attrs1.update({'station_id': {'cf_role': "timeseries_id", 'virtual_station': False}, 'lat': {'standard_name': "latitude", 'units': "degrees_north"}, 'lon': {'standard_name': "longitude", 'units': "degrees_east"}, 'time': {'standard_name': 'time', 'long_name': 'start_time'}})
+    if 'name' in df_cols:
+        attrs1.update({'name': {'long_name': 'station name'}})
+    if 'ref' in df_cols:
+        attrs1.update({'ref': {'long_name': 'station reference id given by the owner'}})
+    if 'modified_date' in df_cols:
+        attrs1.update({'modified_date': {'long_name': 'last modified date'}})
+
     if isinstance(ancillary_variables, list):
         attrs1[param_name].update({'ancillary_variables': ' '.join(ancillary_variables)})
 
     encoding1 = copy.deepcopy(encoding)
-    encoding1.update({'time': {'_FillValue': -99999999,'units': "days since 1970-01-01 00:00:00"}, 'lon': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.00001}, 'lat': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.00001}})
+    encoding1.update({'time': {'_FillValue': -99999999, 'units': "days since 1970-01-01 00:00:00"}, 'lon': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.00001}, 'lat': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.00001}})
+    if 'modified_date' in df_cols:
+        encoding1.update({'modified_date': {'_FillValue': -99999999, 'units': "days since 1970-01-01 00:00:00"}})
 
     # Convert to specific CF convention data structure
     if nc_type == 'H25':
@@ -270,16 +279,16 @@ def df_to_xarray(df, nc_type, param_name, attrs, encoding, run_date_key, ancilla
         ds1 = df.set_index('station_id')[ds_cols].to_xarray().rename({'station_id': 'stationIndex'})
         attrs1.update({'stationIndex': {'instance_dimension': 'station_id', 'long_name': 'The index for the ragged array'}})
 
-        site_df = df[site_cols].drop_duplicates('station_id').set_index('station_id')
-        site_df[['lon', 'lat']] = site_df[['lon', 'lat']].round(5)
-        site_ds1 = site_df.to_xarray()
+        station_df = df[station_cols].drop_duplicates('station_id').set_index('station_id')
+        station_df[['lon', 'lat']] = station_df[['lon', 'lat']].round(5)
+        station_ds1 = station_df.to_xarray()
 
-        ds2 = xr.merge([ds1, site_ds1])
+        ds2 = xr.merge([ds1, station_ds1])
 
     elif nc_type == 'H23':
         ds1 = df.set_index('time')[data_cols].to_xarray()
-        site_df = df[site_cols].drop_duplicates('station_id').iloc[0]
-        for e, s in site_df.iteritems():
+        station_df = df[station_cols].drop_duplicates('station_id').iloc[0]
+        for e, s in station_df.iteritems():
             ds1[e] = s
 
         ds2 = ds1
@@ -322,14 +331,14 @@ def df_to_xarray(df, nc_type, param_name, attrs, encoding, run_date_key, ancilla
 
 def grp_ts_agg(df, grp_col, ts_col, freq_code, agg_fun, discrete=False, **kwargs):
     """
-    Simple function to aggregate time series with dataframes with a single column of sites and a column of times.
+    Simple function to aggregate time series with dataframes with a single column of stations and a column of times.
 
     Parameters
     ----------
     df : DataFrame
         Dataframe with a datetime column.
     grp_col : str, list of str, or None
-        Column name that contains the sites.
+        Column name that contains the stations.
     ts_col : str
         The column name of the datetime column.
     freq_code : str
@@ -665,13 +674,13 @@ def create_geometry(coords, geo_type='Point'):
     return geo2
 
 
-def assign_site_id(geometry):
+def assign_station_id(geometry):
     """
 
     """
-    site_id = blake2b(orjson.dumps(geometry), digest_size=12).hexdigest()
+    station_id = blake2b(orjson.dumps(geometry), digest_size=12).hexdigest()
 
-    return site_id
+    return station_id
 
 
 def ht_stats(df, parameter, precision):
@@ -689,34 +698,34 @@ def ht_stats(df, parameter, precision):
     return stats1
 
 
-def process_object_info(s3, bucket, key):
+def process_object_key(s3, bucket, key):
     """
 
     """
     meta1 = s3.head_object(Bucket=bucket, Key=key)
 
-    object_info1 = TimeSeriesObjectInfo(key=key, bucket=bucket, content_length=meta1['ContentLength'], etag=meta1['ETag'].replace('"', ''), run_date=pd.Timestamp(meta1['Metadata']['run_date']), modified_date=meta1['LastModified'])
+    object_info1 = S3ObjectKey(key=key, bucket=bucket, content_length=meta1['ContentLength'], etag=meta1['ETag'].replace('"', ''), run_date=pd.Timestamp(meta1['Metadata']['run_date']), modified_date=meta1['LastModified'])
 
     return object_info1
 
 
-def process_real_site(dataset_id, coords, df, parameter, precision, s3, bucket, key, geo_type='Point', ref=None, name=None, osm_id=None, altitude=None, properties=None):
+def process_real_station(dataset_id, coords, df, parameter, precision, s3, bucket, key, geo_type='Point', ref=None, name=None, osm_id=None, altitude=None, properties=None):
     """
 
     """
     geo1 = create_geometry(coords, geo_type='Point')
-    site_id = assign_site_id(geo1)
+    station_id = assign_station_id(geo1)
 
     stats1 = ht_stats(df, parameter, precision)
 
-    object_info1 = process_object_info(s3, bucket, key)
+    object_info1 = process_object_key(s3, bucket, key)
 
-    site_m = Site(dataset_id=dataset_id, site_id=site_id, virtual_site=False, geometry=geo1, stats=stats1, time_series_object_info=object_info1, ref=ref, name=name, osm_id=osm_id, altitude=altitude, properties=properties)
+    station_m = Station(dataset_id=dataset_id, station_id=station_id, virtual_station=False, geometry=geo1, stats=stats1, time_series_object_key=object_info1, ref=ref, name=name, osm_id=osm_id, altitude=altitude, properties=properties)
 
-    return site_m
+    return station_m
 
 
-def update_remote_sites(s3, bucket, dataset_id, site_list, run_date=None):
+def update_remote_stations(s3, bucket, dataset_id, station_list, run_date=None):
     """
 
     """
@@ -730,41 +739,41 @@ def update_remote_sites(s3, bucket, dataset_id, site_list, run_date=None):
     else:
         raise TypeError('run_date must be None, Timestamp, or a string representation of a timestamp')
 
-    site_key = key_patterns['site'].format(dataset_id=dataset_id)
+    stn_key = key_patterns['station'].format(dataset_id=dataset_id)
     try:
-        obj1 = s3.get_object(Bucket=bucket, Key=site_key)
-        rem_site_body = obj1['Body']
-        rem_site = orjson.loads(read_pkl_zstd(rem_site_body.read(), unpickle=False))
+        obj1 = s3.get_object(Bucket=bucket, Key=stn_key)
+        rem_stn_body = obj1['Body']
+        rem_stn = orjson.loads(read_pkl_zstd(rem_stn_body.read(), unpickle=False))
     except:
-        rem_site = []
+        rem_stn = []
 
-    if rem_site != site_list:
-        print('sites are different, sites.json.zst will be updated')
-        all_ids = set([i['site_id'] for i in rem_site])
-        all_ids.update(set([i['site_id'] for i in site_list]))
+    if rem_stn != station_list:
+        print('stations are different, stations.json.zst will be updated')
+        all_ids = set([i['station_id'] for i in rem_stn])
+        all_ids.update(set([i['station_id'] for i in station_list]))
 
-        up_list = copy.deepcopy(rem_site)
+        up_list = copy.deepcopy(rem_stn)
         up_list = []
 
         for i in all_ids:
-            rem1 = [n for n in rem_site if n['site_id'] == i]
-            new1 = [n for n in site_list if n['site_id'] == i]
+            rem1 = [n for n in rem_stn if n['station_id'] == i]
+            new1 = [n for n in station_list if n['station_id'] == i]
 
             if new1:
                 up_list.append(new1[0])
             else:
                 up_list.append(rem1[0])
 
-        site_json1 = write_pkl_zstd(orjson.dumps(up_list))
-        obj2 = s3.put_object(Bucket=bucket, Key=site_key, Body=site_json1, Metadata={'run_date': run_date_key}, ContentType='application/json')
+        stn_json1 = write_pkl_zstd(orjson.dumps(up_list))
+        obj2 = s3.put_object(Bucket=bucket, Key=stn_key, Body=stn_json1, Metadata={'run_date': run_date_key}, ContentType='application/json')
     else:
-        print('sites are the same, sites.json.zst will not be updated')
-        up_list = rem_site
+        print('stations are the same, stations.json.zst will not be updated')
+        up_list = rem_stn
 
     return up_list
 
 
-def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
+def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections):
     """
 
     """
@@ -781,7 +790,7 @@ def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
         datasets = param['source']['dataset_mapping']
 
         encoding_keys = ['scale_factor', 'dtype', '_FillValue']
-        base_keys = ['feature', 'parameter', 'method', 'processing_code', 'owner', 'aggregation_statistic', 'frequency_interval', 'utc_offset']
+        base_keys = ['feature', 'parameter', 'method', 'product_code', 'owner', 'aggregation_statistic', 'frequency_interval', 'utc_offset']
 
         base_url = param['source']['api_endpoint']
         hts = param['source']['hts']
@@ -790,9 +799,9 @@ def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
         base_key_pattern = nc_ts_key_pattern[nc_type]
         last_run_key_pattern = key_patterns['ts']
 
-        site_key_pattern = key_patterns['site']
+        stn_key_pattern = key_patterns['station']
         # key_pattern = base_key_pattern + '.zst'
-        # last_run_key_pattern = 'last_run' + base_key_pattern[11:].split('{date}')[0] + '{site}.H23.nc.zst'
+        # last_run_key_pattern = 'last_run' + base_key_pattern[11:].split('{date}')[0] + '{station}.H23.nc.zst'
 
         # data_dir = 'data'
 
@@ -804,7 +813,7 @@ def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
 
         ### Initalize
 
-        run_date = pd.Timestamp.today(tz='utc')
+        run_date = pd.Timestamp.today(tz='utc').round('s')
         run_date_local = run_date.tz_convert(ts_local_tz).tz_localize(None).strftime('%Y-%m-%d %H:%M:%S')
         run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
 
@@ -826,32 +835,32 @@ def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
 
         dataset_list = update_remote_dataset(s3, param['remote']['bucket'], dataset_list, run_date_key)
 
-        ### Pull out sites
-        sites1 = ws.site_list(base_url, hts, location='LatLong')
-        sites2 = sites1[~((sites1.lat < -47.5) & (sites1.lat > -44) & (sites1.lon > 166) & (sites1.lon < 171))].dropna().copy()
-        sites2.rename(columns={'SiteName': 'station_id'}, inplace=True)
+        ### Pull out stations
+        stns1 = ws.site_list(base_url, hts, location='LatLong')
+        stns2 = stns1[~((stns1.lat < -47.5) & (stns1.lat > -44) & (stns1.lon > 166) & (stns1.lon < 171))].dropna().copy()
+        stns2.rename(columns={'SiteName': 'ref'}, inplace=True)
 
-        sites2['geo'] = sites2.apply(lambda x: create_geometry([x.lon, x.lat]), axis=1)
-        sites2['site_id'] = sites2.apply(lambda x: assign_site_id(x.geo), axis=1)
+        stns2['geo'] = stns2.apply(lambda x: create_geometry([x.lon, x.lat]), axis=1)
+        stns2['station_id'] = stns2.apply(lambda x: assign_station_id(x.geo), axis=1)
 
-        print('-Running through site/measurement combos')
+        print('-Running through station/measurement combos')
 
         mtypes_list = []
-        for s in sites2.station_id:
+        for s in stns2.ref:
             print(s)
             try:
                 meas1 = ws.measurement_list(base_url, hts, s)
             except:
-                print('** site is bad')
+                print('** station is bad')
             mtypes_list.append(meas1)
         mtypes_df = pd.concat(mtypes_list).reset_index()
 
         ## Make corrections to mtypes
-        for i, f in site_mtype_corrections.items():
+        for i, f in station_mtype_corrections.items():
             mtypes_df.loc[(mtypes_df.Site == i[0]) & (mtypes_df.Measurement == i[1]), 'From'] = f
 
         # save_folder_flag = set()
-        sites_dict = {d['dataset_id']: [] for d in dataset_list}
+        stns_dict = {d['dataset_id']: [] for d in dataset_list}
 
         for meas in datasets:
 
@@ -861,7 +870,7 @@ def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
 
             if not mtypes_df2.empty:
 
-                ##  Iterate through each site
+                ##  Iterate through each stn
                 for i, row in mtypes_df2.iterrows():
                     print(row.Site)
 
@@ -878,7 +887,7 @@ def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
                                 to_date = start_date + pd.DateOffset(years=20)
                                 if to_date > row.To:
                                     to_date = row.To
-                                ts_data_chunk = ws.get_data(base_url, hts, row.Site, row.Measurement,  from_date=str(start_date), to_date=str(to_date), quality_codes=True)
+                                ts_data_chunk = ws.get_data(base_url, hts, row.Site, row.Measurement, from_date=str(start_date), to_date=str(to_date), quality_codes=True)
                                 ts_data_list.append(ts_data_chunk)
                                 start_date = to_date
                                 if to_date >= row.To:
@@ -926,7 +935,7 @@ def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
                         parameter = ds_mapping['parameter']
                         precision = int(np.abs(np.log10(encoding1[parameter]['scale_factor'])))
 
-                        ts_data1 = ts_data.reset_index().drop('Measurement', axis=1).rename(columns={'QualityCode': qual_col, 'Value': parameter, 'Site': 'station_id', 'DateTime': 'time'}).copy()
+                        ts_data1 = ts_data.reset_index().drop('Measurement', axis=1).rename(columns={'QualityCode': qual_col, 'Value': parameter, 'Site': 'ref', 'DateTime': 'time'}).copy()
                         # ts_data1.station_id = ts_data1.station_id.str.replace(' ', '_').str.replace('/', '')
                         ts_data1[parameter] = pd.to_numeric(ts_data1[parameter], errors='ignore')
 
@@ -935,16 +944,16 @@ def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
 
                         # Parameter
                         if freq_code == 'T':
-                            grp1 = ts_data1.groupby(['station_id', 'time'])
+                            grp1 = ts_data1.groupby(['ref', 'time'])
                             data1 = grp1[parameter].mean()
 
                         else:
                             agg_fun = agg_stat_mapping[ds_mapping['aggregation_statistic']]
 
                             if agg_fun == 'sum':
-                                data1 = grp_ts_agg(ts_data1[['station_id', 'time', parameter]], 'station_id', 'time', freq_code, agg_fun)
+                                data1 = grp_ts_agg(ts_data1[['ref', 'time', parameter]], 'ref', 'time', freq_code, agg_fun)
                             else:
-                                data1 = grp_ts_agg(ts_data1[['station_id', 'time', parameter]], 'station_id', 'time', freq_code, agg_fun, True)
+                                data1 = grp_ts_agg(ts_data1[['ref', 'time', parameter]], 'ref', 'time', freq_code, agg_fun, True)
 
                         # Quality code
                         if qual_col in ts_data1.columns:
@@ -952,22 +961,27 @@ def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
                             if freq_code == 'T':
                                 qual1 = grp1[qual_col].min()
                             else:
-                                qual1 = grp_ts_agg(ts_data1[['station_id', 'time', qual_col]], 'station_id', 'time', freq_code, 'min')
+                                qual1 = grp_ts_agg(ts_data1[['ref', 'time', qual_col]], 'ref', 'time', freq_code, 'min')
                             df3 = pd.concat([data1, qual1], axis=1).reset_index().dropna()
                         else:
                             df3 = data1.reset_index().copy()
 
                         df3['time'] = df3['time'].dt.tz_localize(ts_local_tz).dt.tz_convert('utc').dt.tz_localize(None)
 
-                        ## Get site_id
-                        site2 = sites2[sites2.station_id == row.Site].copy()
-                        site_id = site2.site_id.iloc[0]
+                        ## Get stn_id
+                        stn2 = stns2[stns2.ref == row.Site].copy()
+                        stn_id = stn2.station_id.iloc[0]
+                        ref = stn2.ref.iloc[0]
+
+                        df3['station_id'] = stn_id
+                        df3.drop('ref', axis=1, inplace=True)
+                        df3['modified_date'] = run_date.tz_localize(None)
 
                         ## Create original key name
                         print('Compare to last run')
                         # site_id = row.Site.replace(' ', '_').replace('/', '')
                         key_dict = base_key_dict.copy()
-                        key_dict.update({'site_id': site_id})
+                        key_dict.update({'station_id': stn_id})
 
                         last_key = last_run_key_pattern.format(**key_dict)
 
@@ -976,7 +990,7 @@ def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
                             b1 = obj1['Body'].read()
                             p_old_one = read_pkl_zstd(b1, False)
                             xr_old_one = xr.open_dataset(p_old_one)
-                            old_one = xr_old_one.to_dataframe().drop(['lat', 'lon'], axis=1).reset_index()
+                            old_one = xr_old_one.to_dataframe().drop(['lat', 'lon', 'ref'], axis=1).reset_index()
                             old_one['time'] = old_one.time.dt.round('s')
                             old_one[parameter] = old_one[parameter].round(precision)
 
@@ -986,22 +1000,26 @@ def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
 
                         ## Compare to previous run
                         df3[parameter] = df3[parameter].round(precision)
-                        res1 = compare_dfs(old_one, df3, on=['station_id', 'time'])
+                        res1 = compare_dfs(old_one.drop('modified_date', axis=1), df3.drop('modified_date', axis=1), on=['station_id', 'time'])
+                        # res1 = compare_dfs(old_one, df3, on=['station_id', 'time'])
 
                         up1 = pd.concat([res1['diff'], res1['new']])
                         up1[parameter] = pd.to_numeric(up1[parameter], errors='coerce')
+                        up1['modified_date'] = run_date.tz_localize(None)
+
+                        all_ones = pd.concat([old_one, up1]).drop_duplicates(subset='time', keep='last').sort_index()
 
                         ## Process data
                         if not up1.empty:
 
                             print('Save updated data')
-                            df4_up = pd.merge(up1, site2.drop(['geo', 'site_id'], axis=1), on='station_id')
-                            df4_all = pd.merge(df3, site2.drop(['geo', 'site_id'], axis=1), on='station_id')
+                            df4_up = pd.merge(up1, stn2.drop(['geo'], axis=1), on='station_id')
+                            df4_all = pd.merge(all_ones, stn2.drop(['geo'], axis=1), on='station_id')
 
                             if qual_col in df4_all.columns:
                                 df4_up[qual_col] = pd.to_numeric(df4_up[qual_col], errors='coerce', downcast='integer')
                                 df4_all[qual_col] = pd.to_numeric(df4_all[qual_col], errors='coerce', downcast='integer')
-                                ancillary_variables = [qual_col]
+                                ancillary_variables = [qual_col, 'modified_date']
                                 p_up1 = df_to_xarray(df4_up, nc_type, parameter, attrs1, encoding1, run_date_key, ancillary_variables, True)
                                 p_all1 = df_to_xarray(df4_all, nc_type, parameter, attrs1, encoding1, run_date_key, ancillary_variables, True)
                             else:
@@ -1019,20 +1037,20 @@ def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
 
                             s3.put_object(Body=p_all1, Bucket=param['remote']['bucket'], Key=last_key, ContentType='application/zstd', Metadata={'run_date': run_date_key})
 
-                            ## Process site data
-                            site3 = site2.iloc[0]
-                            site_m = process_real_site(ds['dataset_id'], [float(site3.lon), float(site3.lat)], df3, parameter, precision, s3, param['remote']['bucket'], last_key, ref=site3['station_id'])
+                            ## Process stn data
+                            stn3 = stn2.iloc[0]
+                            stn_m = process_real_station(ds['dataset_id'], [float(stn3.lon), float(stn3.lat)], df3, parameter, precision, s3, param['remote']['bucket'], last_key, ref=stn3['ref'])
 
-                            site4 = orjson.loads(site_m.json(exclude_none=True))
-                            sites_dict[ds['dataset_id']].append(site4)
+                            stn4 = orjson.loads(stn_m.json(exclude_none=True))
+                            stns_dict[ds['dataset_id']].append(stn4)
 
                             # save_folder_flag.update([meas])
 
                         else:
                             print('No new data to update')
 
-        for ds_id, site_list in sites_dict.items():
-            up_sites = update_remote_sites(s3, param['remote']['bucket'], ds_id, site_list, run_date=run_date)
+        for ds_id, stn_list in stns_dict.items():
+            up_stns = update_remote_stations(s3, param['remote']['bucket'], ds_id, stn_list, run_date=run_date)
 
 
 
@@ -1052,7 +1070,7 @@ def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
         #         other_key_dict = base_key_dict.copy()
         #         other_key_dict.update({'date': run_date_key})
         #
-        #         ds_date_key = key_pattern.split(param['remote']['delimiter'] + '{site}')[0].format(**other_key_dict)
+        #         ds_date_key = key_pattern.split(param['remote']['delimiter'] + '{station}')[0].format(**other_key_dict)
         #
         #         z_bytes = io.BytesIO(b'')
         #         s3.upload_fileobj(Fileobj=z_bytes, Bucket=param['remote']['bucket'], Key=ds_date_key)
@@ -1063,6 +1081,9 @@ def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
         # print(err)
         print(traceback.format_exc())
         email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc())
+
+
+
 
 
 #########################################
@@ -1084,6 +1105,16 @@ def get_qc_hilltop_data(param, ts_local_tz, site_mtype_corrections):
 # precision = {'result': 4, 'qc': 0}
 #
 # virtual_site = False
+
+# b2 = io.BytesIO()
+#
+# p_up1 = df_to_xarray(df4_up, nc_type, parameter, attrs1, encoding1, run_date_key, ancillary_variables, False)
+#
+#
+# b1 = dataset_to_bytes(p_up1)
+#
+#
+# p_up1.to_netcdf(b2, engine='netcdf4')
 
 
 
