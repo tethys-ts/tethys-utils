@@ -22,6 +22,7 @@ import requests
 from hashlib import blake2b
 from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats
 from geojson import Point
+import urllib3
 
 ####################################################
 ### Misc reference objects
@@ -467,7 +468,7 @@ def compare_dfs(old_df, new_df, on):
     return dict1
 
 
-def discrete_resample(df, freq_code, agg_fun, **kwargs):
+def discrete_resample(df, freq_code, agg_fun, remove_inter=False, **kwargs):
     """
     Function to properly set up a resampling class for discrete data. This assumes a linear interpolation between data points.
 
@@ -490,14 +491,20 @@ def discrete_resample(df, freq_code, agg_fun, **kwargs):
         if isinstance(df.index, pd.DatetimeIndex):
             reg1 = pd.date_range(df.index[0].ceil(freq_code), df.index[-1].floor(freq_code), freq=freq_code)
             reg2 = reg1[~reg1.isin(df.index)]
-            s1 = pd.DataFrame(np.nan, index=reg2, columns=df.columns)
+            if isinstance(df, pd.Series):
+                s1 = pd.Series(np.nan, index=reg2)
+            else:
+                s1 = pd.DataFrame(np.nan, index=reg2, columns=df.columns)
             s2 = pd.concat([df, s1]).sort_index()
             s3 = s2.interpolate('time')
             s4 = (s3 + s3.shift(-1))/2
             s5 = s4.resample(freq_code, **kwargs).agg(agg_fun).dropna()
 
-            index1 = df.index.floor(freq_code).unique()
-            s6 = s5[s5.index.isin(index1)].copy()
+            if remove_inter:
+                index1 = df.index.floor(freq_code).unique()
+                s6 = s5[s5.index.isin(index1)].copy()
+            else:
+                s6 = s5
         else:
             raise ValueError('The index must be a datetimeindex')
     else:
@@ -883,7 +890,7 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections):
                         try:
                             start_date = row.From
                             while True:
-                                sleep(1)
+                                sleep(3)
                                 to_date = start_date + pd.DateOffset(years=20)
                                 if to_date > row.To:
                                     to_date = row.To
@@ -897,13 +904,14 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections):
                         except requests.exceptions.ConnectionError as err:
                             print(row.Site + ' and ' + row.Measurement + ' error: ' + str(err))
                             timer = timer - 1
-                            sleep(20)
+                            sleep(30)
                         except ValueError as err:
                             print(row.Site + ' and ' + row.Measurement + ' error: ' + str(err))
                             break
-                        except requests.exceptions.Timeout:
+                        except Exception as err:
+                            print(str(err))
                             timer = timer - 1
-                            sleep(20)
+                            sleep(30)
 
                     if timer == 0:
                         raise ValueError('The Hilltop request tried too many times...the server is probably down')
@@ -1007,12 +1015,12 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections):
                         up1[parameter] = pd.to_numeric(up1[parameter], errors='coerce')
                         up1['modified_date'] = run_date.tz_localize(None)
 
-                        all_ones = pd.concat([old_one, up1]).drop_duplicates(subset='time', keep='last').sort_index()
+                        all_ones = pd.concat([old_one, up1]).drop_duplicates(subset='time', keep='last').sort_values('time')
+                        all_ones[parameter] = pd.to_numeric(all_ones[parameter], errors='coerce')
 
                         ## Process data
                         if not up1.empty:
 
-                            print('Save updated data')
                             df4_up = pd.merge(up1, stn2.drop(['geo'], axis=1), on='station_id')
                             df4_all = pd.merge(all_ones, stn2.drop(['geo'], axis=1), on='station_id')
 
@@ -1020,13 +1028,14 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections):
                                 df4_up[qual_col] = pd.to_numeric(df4_up[qual_col], errors='coerce', downcast='integer')
                                 df4_all[qual_col] = pd.to_numeric(df4_all[qual_col], errors='coerce', downcast='integer')
                                 ancillary_variables = [qual_col, 'modified_date']
-                                p_up1 = df_to_xarray(df4_up, nc_type, parameter, attrs1, encoding1, run_date_key, ancillary_variables, True)
-                                p_all1 = df_to_xarray(df4_all, nc_type, parameter, attrs1, encoding1, run_date_key, ancillary_variables, True)
                             else:
-                                p_up1 = df_to_xarray(df4_up, nc_type, parameter, attrs1, encoding1, run_date_key, None, True)
-                                p_all1 = df_to_xarray(df4_all, nc_type, parameter, attrs1, encoding1, run_date_key, None, True)
+                                ancillary_variables = ['modified_date']
+
+                            p_up1 = df_to_xarray(df4_up, nc_type, parameter, attrs1, encoding1, run_date_key, ancillary_variables, True)
+                            p_all1 = df_to_xarray(df4_all, nc_type, parameter, attrs1, encoding1, run_date_key, ancillary_variables, True)
 
                             ## Save updated data
+                            print('Save updated data')
                             key_dict.update({'date': run_date_key})
                             skp4 = base_key_pattern.format(**key_dict)
 
@@ -1038,19 +1047,21 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections):
                             s3.put_object(Body=p_all1, Bucket=param['remote']['bucket'], Key=last_key, ContentType='application/zstd', Metadata={'run_date': run_date_key})
 
                             ## Process stn data
+                            print('Save station data')
                             stn3 = stn2.iloc[0]
                             stn_m = process_real_station(ds['dataset_id'], [float(stn3.lon), float(stn3.lat)], df3, parameter, precision, s3, param['remote']['bucket'], last_key, ref=stn3['ref'])
 
                             stn4 = orjson.loads(stn_m.json(exclude_none=True))
-                            stns_dict[ds['dataset_id']].append(stn4)
+                            up_stns = update_remote_stations(s3, param['remote']['bucket'], ds['dataset_id'], [stn4], run_date=run_date)
+                            # stns_dict[ds['dataset_id']].append(stn4)
 
                             # save_folder_flag.update([meas])
 
                         else:
                             print('No new data to update')
 
-        for ds_id, stn_list in stns_dict.items():
-            up_stns = update_remote_stations(s3, param['remote']['bucket'], ds_id, stn_list, run_date=run_date)
+        # for ds_id, stn_list in stns_dict.items():
+        #     up_stns = update_remote_stations(s3, param['remote']['bucket'], ds_id, stn_list, run_date=run_date)
 
 
 
@@ -1118,10 +1129,12 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections):
 
 
 
-
-
-
-
+# from functools import partial
+# from pandas.tseries.frequencies import to_offset
+#
+# def uround(t, freq):
+#     freq = to_offset(freq)
+#     return pd.Timestamp((t.value // freq.delta.value) * freq.delta.value)
 
 
 
