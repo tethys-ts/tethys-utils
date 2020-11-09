@@ -1,6 +1,6 @@
 {% set name = "tethys-utils" %}
-{% set version = "0.1.10" %}
-{% set sha256 = "abf0f6ccab7a1c4730ea0a81c8754a94d07d580856213dd73b299362a7aa0bed" %}
+{% set version = "0.1.13" %}
+{% set sha256 = "914f8491467b1dc778d6fc24b5a3a68edb463d8af969eff3bd9bf8b6d0b26122" %}
 
 # sha256 is the prefered checksum -- you can get it for a file with:
 #  `openssl sha256 <file name>`.
@@ -43,7 +43,6 @@ requirements:
     - boto3
     - pydantic
     - orjson
-    - hilltop-py
     - geojson
 
 test:
