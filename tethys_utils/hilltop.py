@@ -20,7 +20,7 @@ import urllib3
 ### Functions for Hilltop data extraction
 
 
-def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections):
+def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
     """
 
     """
@@ -86,7 +86,7 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections):
 
         ### Pull out stations
         stns1 = ws.site_list(base_url, hts, location='LatLong')
-        stns2 = stns1[~((stns1.lat < -47.5) & (stns1.lat > -44) & (stns1.lon > 166) & (stns1.lon < 171))].dropna().copy()
+        stns2 = stns1[~((stns1.lat < -47.5) & (stns1.lat > -34) & (stns1.lon > 166) & (stns1.lon < 179))].dropna().copy()
         stns2.rename(columns={'SiteName': 'ref'}, inplace=True)
 
         stns2['geo'] = stns2.apply(lambda x: create_geometry([x.lon, x.lat]), axis=1)
@@ -105,8 +105,9 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections):
         mtypes_df = pd.concat(mtypes_list).reset_index()
 
         ## Make corrections to mtypes
-        for i, f in station_mtype_corrections.items():
-            mtypes_df.loc[(mtypes_df.Site == i[0]) & (mtypes_df.Measurement == i[1]), 'From'] = f
+        if station_mtype_corrections is not None:
+            for i, f in station_mtype_corrections.items():
+                mtypes_df.loc[(mtypes_df.Site == i[0]) & (mtypes_df.Measurement == i[1]), 'From'] = f
 
         # save_folder_flag = set()
         stns_dict = {d['dataset_id']: [] for d in dataset_list}
