@@ -730,6 +730,21 @@ def process_real_station(dataset_id, coords, df, parameter, precision, s3, bucke
     return station_m
 
 
+def get_remote_station(s3, bucket, dataset_id):
+    """
+
+    """
+    stn_key = key_patterns['station'].format(dataset_id=dataset_id)
+    try:
+        obj1 = s3.get_object(Bucket=bucket, Key=stn_key)
+        rem_stn_body = obj1['Body']
+        rem_stn = orjson.loads(read_pkl_zstd(rem_stn_body.read(), unpickle=False))
+    except:
+        rem_stn = []
+
+    return rem_stn
+
+
 def update_remote_stations(s3, bucket, dataset_id, station_list, run_date=None):
     """
 
@@ -744,13 +759,7 @@ def update_remote_stations(s3, bucket, dataset_id, station_list, run_date=None):
     else:
         raise TypeError('run_date must be None, Timestamp, or a string representation of a timestamp')
 
-    stn_key = key_patterns['station'].format(dataset_id=dataset_id)
-    try:
-        obj1 = s3.get_object(Bucket=bucket, Key=stn_key)
-        rem_stn_body = obj1['Body']
-        rem_stn = orjson.loads(read_pkl_zstd(rem_stn_body.read(), unpickle=False))
-    except:
-        rem_stn = []
+    rem_stn = get_remote_station(s3, bucket, dataset_id)
 
     if rem_stn != station_list:
         print('stations are different, stations.json.zst will be updated')
