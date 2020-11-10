@@ -20,6 +20,138 @@ import urllib3
 ### Functions for Hilltop data extraction
 
 
+def convert_site_names(names, rem_m=True):
+    """
+    Function to convert water usage site names.
+    """
+
+    names1 = names.str.replace('[:\.]', '/')
+#    names1.loc[names1 == 'L35183/580-M1'] = 'L35/183/580-M1' What to do with this one?
+#    names1.loc[names1 == 'L370557-M1'] = 'L37/0557-M1'
+#    names1.loc[names1 == 'L370557-M72'] = 'L37/0557-M72'
+#    names1.loc[names1 == 'BENNETT K38/0190-M1'] = 'K38/0190-M1'
+    names1 = names1.str.upper()
+    if rem_m:
+        list_names1 = names1.str.findall('[A-Z]+\d*/\d+')
+        names_len_bool = list_names1.apply(lambda x: len(x)) == 1
+        names2 = names1.copy()
+        names2[names_len_bool] = list_names1[names_len_bool].apply(lambda x: x[0])
+        names2[~names_len_bool] = np.nan
+    else:
+        list_names1 = names1.str.findall('[A-Z]+\d*/\d+\s*-\s*M\d*')
+        names_len_bool = list_names1.apply(lambda x: len(x)) == 1
+        names2 = names1.copy()
+        names2[names_len_bool] = list_names1[names_len_bool].apply(lambda x: x[0])
+        names2[~names_len_bool] = np.nan
+
+    return names2
+
+
+def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=None):
+    """
+
+    """
+    import requests
+    from hilltoppy import web_service as ws
+    from hilltoppy import util
+
+    try:
+
+        ### Read in parameters
+
+        # mod_local_tz = 'Pacific/Auckland'
+
+        base_url = param['source']['api_endpoint']
+        hts = param['source']['hts']
+
+        datasets = param['source']['dataset_mapping']
+
+        encoding_keys = ['scale_factor', 'dtype', '_FillValue']
+        base_keys = ['feature', 'parameter', 'method', 'product_code', 'owner', 'aggregation_statistic', 'frequency_interval', 'utc_offset']
+
+        base_url = param['source']['api_endpoint']
+        hts = param['source']['hts']
+
+        nc_type = param['source']['nc_type']
+        base_key_pattern = nc_ts_key_pattern[nc_type]
+        last_run_key_pattern = key_patterns['ts']
+
+        stn_key_pattern = key_patterns['station']
+        # key_pattern = base_key_pattern + '.zst'
+        # last_run_key_pattern = 'last_run' + base_key_pattern[11:].split('{date}')[0] + '{station}.H23.nc.zst'
+
+        # data_dir = 'data'
+
+        attrs = {'quality_code': {'standard_name': 'quality_flag', 'long_name': 'NEMS quality code', 'references': 'https://www.lawa.org.nz/media/16580/nems-quality-code-schema-2013-06-1-.pdf'}}
+
+        encoding = {'quality_code': {'dtype': 'int16', '_FillValue': -9999}}
+
+        gauging_measurements = ['Flow [Gauging Results]', 'Stage', 'Area', 'Velocity [Gauging Results]', 'Max Depth', 'Slope', 'Width', 'Hyd Radius', 'Wet. Perimeter', 'Sed. Conc.', 'Temperature', 'Stage Change [Gauging Results]', 'Method', 'Number Verts.', 'Gauge Num.']
+
+        ### Initalize
+
+        run_date = pd.Timestamp.today(tz='utc').round('s')
+        run_date_local = run_date.tz_convert(ts_local_tz).tz_localize(None).strftime('%Y-%m-%d %H:%M:%S')
+        run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
+
+        # if not os.path.exists(data_dir):
+        #     os.mkdir(data_dir)
+
+        s3 = s3_connection(param['remote']['connection_config'])
+
+        ### Get remote objects
+        # s3_objects1 = list_parse_s3(s3, param['remote']['bucket'], last_run_key_pattern.split('{dataset_id}')[0])
+
+        ### Create dataset_ids, check if datasets.json exist on remote, and if not add it
+        for ht_ds, ds_list in datasets.items():
+            ds_list2 = assign_ds_ids(ds_list)
+            datasets[ht_ds] = ds_list2
+
+        dataset_list = []
+        [dataset_list.extend(ds_list) for ht_ds, ds_list in datasets.items()]
+
+        dataset_list = update_remote_dataset(s3, param['remote']['bucket'], dataset_list, run_date_key)
+
+        ### Pull out stations
+        stns1 = ws.site_list(base_url, hts, location='LatLong')
+        stns2 = stns1[~((stns1.lat < -47.5) & (stns1.lat > -34) & (stns1.lon > 166) & (stns1.lon < 179))].dropna().copy()
+        stns2.rename(columns={'SiteName': 'ref'}, inplace=True)
+
+        stns2['wap'] = convert_site_names(stns2.ref)
+        stns2 = stns2.dropna().copy()
+
+        stns2['geo'] = stns2.apply(lambda x: create_geometry([x.lon, x.lat]), axis=1)
+        stns2['station_id'] = stns2.apply(lambda x: assign_station_id(x.geo), axis=1)
+
+        print('-Running through station/measurement combos')
+
+        mtypes_list = []
+        for s in stns2.ref:
+            print(s)
+            try:
+                meas1 = ws.measurement_list(base_url, hts, s)
+            except:
+                print('** station is bad')
+            mtypes_list.append(meas1)
+        mtypes_df = pd.concat(mtypes_list).reset_index()
+
+        ## Make corrections to mtypes
+        if station_mtype_corrections is not None:
+            for i, f in station_mtype_corrections.items():
+                mtypes_df.loc[(mtypes_df.Site == i[0]) & (mtypes_df.Measurement == i[1]), 'From'] = f
+
+        # save_folder_flag = set()
+        stns_dict = {d['dataset_id']: [] for d in dataset_list}
+
+
+
+
+
+
+
+
+
+
 def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
     """
 
