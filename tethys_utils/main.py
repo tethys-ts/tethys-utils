@@ -144,6 +144,23 @@ def get_last_date(s3_df, default_date='1900-01-01', date_type='date', local_tz=N
     return last_run_date
 
 
+def make_run_date_key(run_date=None):
+    """
+
+    """
+    if run_date is None:
+        run_date = pd.Timestamp.today(tz='utc')
+        run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
+    elif isinstance(run_date, pd.Timestamp):
+        run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
+    elif isinstance(run_date, str):
+        run_date_key = run_date
+    else:
+        raise TypeError('run_date must be None, Timestamp, or a string representation of a timestamp')
+
+    return run_date_key
+
+
 def write_pkl_zstd(obj, file_path=None, compress_level=1, pkl_protocol=pickle.HIGHEST_PROTOCOL):
     """
     Serializer using pickle and zstandard. Converts any object that can be pickled to a binary object then compresses it using zstandard. Optionally saves the object to disk. If obj is bytes, then it will only be compressed without pickling.
@@ -240,7 +257,7 @@ def ts_data_integrety_checks(data, param_name, attrs, encoding, ancillary_variab
     if isinstance(attrs, dict):
         attrs_keys = list(attrs.keys())
         for col in ts_data_cols:
-            if not col in no_attrs_list:
+            if not col in ts_no_attrs_list:
                 if not col in ts_essential_list:
                     if not col in attrs_keys:
                         raise ValueError('Not all columns are in the attrs dict')
@@ -393,7 +410,7 @@ def data_to_xarray(ts_data, station_data, param_name, ts_attrs, ts_encoding, sta
 
         return c_obj
     else:
-        return ds2
+        return ds1
 
 
 def grp_ts_agg(df, grp_col, ts_col, freq_code, agg_fun, discrete=False, **kwargs):
@@ -679,23 +696,6 @@ def assign_ds_ids(datasets):
         ds['dataset_id'] = ds_id
 
     return dss
-
-
-def make_run_date_key(run_date=None):
-    """
-
-    """
-    if run_date is None:
-        run_date = pd.Timestamp.today(tz='utc')
-        run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
-    elif isinstance(run_date, pd.Timestamp):
-        run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
-    elif isinstance(run_date, str):
-        run_date_key = run_date
-    else:
-        raise TypeError('run_date must be None, Timestamp, or a string representation of a timestamp')
-
-    return run_date_key
 
 
 def update_remote_dataset(s3, bucket, datasets, run_date=None):
