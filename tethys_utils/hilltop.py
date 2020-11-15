@@ -12,7 +12,7 @@ import orjson
 from time import sleep
 import traceback
 from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats
-from tethys_utils.main import nc_ts_key_pattern, key_patterns, assign_ds_ids, update_remote_dataset, create_geometry, assign_station_id, grp_ts_agg, read_pkl_zstd, compare_dfs, df_to_xarray, process_real_station, update_remote_stations, email_msg, s3_connection
+from tethys_utils.main import nc_ts_key_pattern, key_patterns, assign_ds_ids, update_remote_dataset, create_geometry, assign_station_id, grp_ts_agg, read_pkl_zstd, compare_dfs, data_to_xarray, process_real_station, update_remote_stations, email_msg, s3_connection
 import urllib3
 
 
