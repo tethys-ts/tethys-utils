@@ -33,7 +33,7 @@ nc_ts_key_pattern = {
                     'H25': 'tethys/diff/{dataset_id}/{date}.H25.nc.zst'
                     }
 
-key_patterns = {'ts': 'tethys/latest/{dataset_id}/{station_id}/ts_data.nc.zst',
+key_patterns = {'ts': 'tethys/latest/{dataset_id}/{station_id}/ts_data.H23.nc.zst',
                 'dataset': 'tethys/latest/datasets.json',
                 'station': 'tethys/latest/{dataset_id}/stations.json.zst'
                 }
@@ -206,117 +206,185 @@ def read_pkl_zstd(obj, unpickle=True):
     return obj1
 
 
-def df_to_xarray(df, nc_type, param_name, attrs, encoding, run_date_key, ancillary_variables=None, compression=False, compress_level=1):
+def ts_data_integrety_checks(data, param_name, attrs, encoding, ancillary_variables=None):
     """
 
     """
-    ## Integrity Checks
+    # Time series data
     data_cols = []
     if isinstance(ancillary_variables, list):
         for av in ancillary_variables:
-            if not av in df:
+            if not av in data:
                 raise ValueError('The DataFrame must contain every value in the ancillary_variables list')
             else:
                 data_cols.extend([av])
 
     data_cols.extend([param_name])
 
-    essential_list = [param_name, 'time', 'lat', 'lon', 'station_id']
-    no_attrs_list = ['ref', 'name', 'modified_date']
+    ts_index_list = ['time', 'height']
+    ts_essential_list = [param_name]
+    ts_no_attrs_list = ['modified_date']
 
-    df_cols = list(df.columns)
+    ts_data_cols = list(data.columns)
 
-    for c in essential_list:
-        if not c in df_cols:
-            raise ValueError('The DataFrame must contain the column: ' + str(c))
+    for c in ts_essential_list:
+        if not c in ts_data_cols:
+            raise ValueError('The ts_data DataFrame must contain the column: ' + str(c))
+
+    ts_data_index = list(data.index.names)
+
+    for c in ts_index_list:
+        if not c in ts_data_index:
+            raise ValueError('The ts_data DataFrame must contain the index: ' + str(c))
 
     if isinstance(attrs, dict):
         attrs_keys = list(attrs.keys())
-        for col in df_cols:
+        for col in ts_data_cols:
             if not col in no_attrs_list:
-                if not col in essential_list:
+                if not col in ts_essential_list:
                     if not col in attrs_keys:
                         raise ValueError('Not all columns are in the attrs dict')
     else:
         raise TypeError('attrs must be a dict')
 
-    if not param_name in encoding:
-        raise ValueError(param_name + ' must be in the encoding dict')
+    if isinstance(encoding, dict):
+        for col in ts_data_cols:
+            if not col in encoding:
+                raise ValueError(col + ' must be in the encoding dict')
 
-    # Make sure station_id data type is a str
-    if 'station_id' in df.columns:
-        if np.issubdtype(df['station_id'].dtype, np.number):
-            print('station_id is a ' + df.station_id.dtype.name + '. It will be converted to a string.' )
-            df['station_id'] = df['station_id'].astype(int).astype(str)
+    return data
 
-    ## Process DataFrame
-    station_cols = list(df.columns[~(df.columns.isin(data_cols) | (df.columns == 'time'))])
 
-    print('These are the station columns: ' + ', '.join(station_cols))
+def station_data_integrety_checks(data, attrs=None, encoding=None):
+    """
 
-    attrs1 = copy.deepcopy(attrs)
-    attrs1.update({'station_id': {'cf_role': "timeseries_id", 'virtual_station': False}, 'lat': {'standard_name': "latitude", 'units': "degrees_north"}, 'lon': {'standard_name': "longitude", 'units': "degrees_east"}, 'time': {'standard_name': 'time', 'long_name': 'start_time'}})
-    if 'name' in df_cols:
+    """
+    # Station data
+    essentials = {'lat': (float, np.float), 'lon': (float, np.float), 'station_id': str, 'altitude': (int, float, np.float, np.int)}
+
+    for c in essentials:
+        if not c in data.keys():
+            raise ValueError('The station_data DataFrame must contain the field: ' + str(c))
+
+        if not isinstance(data[c], essentials[c]):
+            raise ValueError('The station_data DataFrame field must have the data type(s): ' + str(essentials[c]))
+
+    return data
+
+
+
+def data_to_xarray(ts_data, station_data, param_name, ts_attrs, ts_encoding, station_attrs=None, station_encoding=None, virtual_station=False, run_date=None, ancillary_variables=None, compression=False, compress_level=1):
+    """
+    Converts DataFrames of time series data, station data, and other attributes to an Xarray Dataset. Optionally has Zstandard compression.
+
+    Parameters
+    ----------
+    ts_data : DataFrame
+        DataFrame of the core parameter and associated ancillary variable indexed by time and height.
+        The index should have the names of "time" and "height". "height" is height above the surface. So if the parameter represents a surface measurement, then the height should be 0.
+    station_data : dict
+        Dictionary of the station data. Should include a station_id which should be a hashed string from blake2b (digest_size=12) of the geojson geometry. The minimum necessary other fields should include lat, lon, and altitude. Data owner specific other fields can include "ref" for the reference id and "name" for the station name.
+    param_name : str
+        The core parameter name of the column in the ts_data DataFrame.
+    ts_attrs : dict
+        A dictionary of the xarray/netcdf attributes of the ts_data. Where the keys are the columns and the values are the attributes.
+    ts_encoding : dict
+        A dictionary of the xarray/netcdf encodings for the ts_data.
+    station_attrs : dict or None
+        Similer to ts_attr, but can be omitted if no extra fields are included in station_data.
+    station_encoding : dict or None
+        Similer to ts_encoding, but can be omitted if no extra fields are included in station_data.
+
+    Returns
+    -------
+    Xarray Dataset or bytes object
+
+    """
+    ## Integrity Checks
+
+    # Time series data
+    ts_data1 = ts_data_integrety_checks(ts_data, param_name, ts_attrs, ts_encoding, ancillary_variables)
+
+    # Station data
+    station_data1 = station_data_integrety_checks(station_data)
+
+    ## Assign Attributes
+
+    if isinstance(station_attrs, dict):
+        attrs1 = copy.deepcopy(station_attrs)
+    else:
+        attrs1 = {}
+
+    attrs1.update({'station_id': {'cf_role': "timeseries_id", 'virtual_station': virtual_station}, 'lat': {'standard_name': "latitude", 'units': "degrees_north"}, 'lon': {'standard_name': "longitude", 'units': "degrees_east"}, 'altitude': {'standard_name': 'surface_altitude', 'long_name': 'height above the geoid to the lower boundary of the atmosphere', 'units': 'm'}})
+    if 'name' in station_data.keys():
         attrs1.update({'name': {'long_name': 'station name'}})
-    if 'ref' in df_cols:
+    if 'ref' in station_data.keys():
         attrs1.update({'ref': {'long_name': 'station reference id given by the owner'}})
-    if 'modified_date' in df_cols:
+
+    ts_cols = list(ts_data.columns)
+
+    attrs1.update(ts_attrs)
+    if 'cf_standard_name' in attrs1[param_name]:
+        attrs1[param_name]['standard_name'] = attrs1[param_name].pop('cf_standard_name')
+    attrs1.update({'height': {'standard_name': 'height', 'long_name': 'vertical distance above the surface', 'units': 'm', 'positive': 'up'}, 'time': {'standard_name': 'time', 'long_name': 'start_time'}})
+    if 'modified_date' in ts_cols:
         attrs1.update({'modified_date': {'long_name': 'last modified date'}})
 
     if isinstance(ancillary_variables, list):
         attrs1[param_name].update({'ancillary_variables': ' '.join(ancillary_variables)})
 
-    encoding1 = copy.deepcopy(encoding)
-    encoding1.update({'time': {'_FillValue': -99999999, 'units': "days since 1970-01-01 00:00:00"}, 'lon': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.00001}, 'lat': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.00001}})
-    if 'modified_date' in df_cols:
+    ## Assign encodings
+    if isinstance(station_encoding, dict):
+        encoding1 = copy.deepcopy(station_encoding)
+    else:
+        encoding1 = {}
+
+    encoding1.update({'lon': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.00001}, 'lat': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.00001}, 'altitude': {'dtype': 'int32', '_FillValue': -9999, 'scale_factor': 0.001}})
+
+    height = pd.to_numeric(ts_data.reset_index()['height'], downcast='integer')
+
+    if 'int' in height.dtype.name:
+        height_enc = {'dtype': height.dtype.name, '_FillValue': -9999}
+        dtype = height.dtype.name
+    elif 'float' in height.dtype.name:
+        height_enc = {'dtype': 'int32', '_FillValue': -9999, 'scale_factor': 0.001}
+    else:
+        raise TypeError('height should be either an int or a float')
+
+    encoding1.update(ts_encoding)
+    encoding1.update({'time': {'_FillValue': -99999999, 'units': "days since 1970-01-01 00:00:00"}, 'height': height_enc})
+    if 'modified_date' in ts_cols:
         encoding1.update({'modified_date': {'_FillValue': -99999999, 'units': "days since 1970-01-01 00:00:00"}})
 
-    # Convert to specific CF convention data structure
-    if nc_type == 'H25':
-        ds_cols = data_cols.copy()
-        ds_cols.extend(['time'])
-        ds1 = df.set_index('station_id')[ds_cols].to_xarray().rename({'station_id': 'stationIndex'})
-        attrs1.update({'stationIndex': {'instance_dimension': 'station_id', 'long_name': 'The index for the ragged array'}})
+    ## Create the Xarray Dataset
 
-        station_df = df[station_cols].drop_duplicates('station_id').set_index('station_id')
-        station_df[['lon', 'lat']] = station_df[['lon', 'lat']].round(5)
-        station_ds1 = station_df.to_xarray()
-
-        ds2 = xr.merge([ds1, station_ds1])
-
-    elif nc_type == 'H23':
-        ds1 = df.set_index('time')[data_cols].to_xarray()
-        station_df = df[station_cols].drop_duplicates('station_id').iloc[0]
-        for e, s in station_df.iteritems():
-            ds1[e] = s
-
-        ds2 = ds1
-
-    else:
-        raise ValueError('nc_type must be either H23 or H25')
+    ds1 = ts_data.to_xarray()
+    for k, v in station_data.items():
+        ds1[k] = v
 
     ## Add attributes and encodings
     for e, val in encoding1.items():
-        if e in ds2:
+        if e in ds1:
             if ('dtype' in val) and (not 'scale_factor' in val):
                 if 'int' in val['dtype']:
-                    ds2[e] = ds2[e].astype(val['dtype'])
+                    ds1[e] = ds1[e].astype(val['dtype'])
             if 'scale_factor' in val:
                 precision = int(np.abs(np.log10(val['scale_factor'])))
-                ds2[e] = ds2[e].round(precision)
-            ds2[e].encoding = val
+                ds1[e] = ds1[e].round(precision)
+            ds1[e].encoding = val
 
     for a, val in attrs1.items():
-        if a in ds2:
-            ds2[a].attrs = val
+        if a in ds1:
+            ds1[a].attrs = val
 
-    ds_mapping = attrs[param_name]
+    ds_mapping = ts_attrs[param_name]
     title_str = '{agg_stat} {parameter} in {units} of the {feature} by a {method} owned by {owner}'.format(agg_stat=ds_mapping['aggregation_statistic'], parameter=ds_mapping['parameter'], units=ds_mapping['units'], feature=ds_mapping['feature'], method=ds_mapping['method'], owner=ds_mapping['owner'])
 
-    ds2.attrs = {'featureType': 'timeSeries', 'title': title_str, 'institution': ds_mapping['owner'], 'license': ds_mapping['license'], 'source': ds_mapping['method'], 'history': run_date_key + ': Generated'}
+    run_date_key = make_run_date_key(run_date)
+    ds1.attrs = {'featureType': 'timeSeries', 'title': title_str, 'institution': ds_mapping['owner'], 'license': ds_mapping['license'], 'source': ds_mapping['method'], 'history': run_date_key + ': Generated'}
 
     ## Test conversion to netcdf
-    p_ts1 = ds2.to_netcdf()
+    p_ts1 = ds1.to_netcdf()
 
     ## Compress if requested
     if compression:
@@ -613,7 +681,7 @@ def assign_ds_ids(datasets):
     return dss
 
 
-def update_remote_dataset(s3, bucket, datasets, run_date=None):
+def make_run_date_key(run_date=None):
     """
 
     """
@@ -626,6 +694,15 @@ def update_remote_dataset(s3, bucket, datasets, run_date=None):
         run_date_key = run_date
     else:
         raise TypeError('run_date must be None, Timestamp, or a string representation of a timestamp')
+
+    return run_date_key
+
+
+def update_remote_dataset(s3, bucket, datasets, run_date=None):
+    """
+
+    """
+    run_date_key = make_run_date_key(run_date)
 
     ds_key = key_patterns['dataset']
     try:
