@@ -21,6 +21,7 @@ from hashlib import blake2b
 from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats
 from geojson import Point
 import urllib3
+from multiprocessing.pool import ThreadPool
 
 ####################################################
 ### Misc reference objects
@@ -122,7 +123,7 @@ def list_parse_s3(s3_client, bucket, prefix, start_after='', delimiter='', conti
         try:
             f_df1['KeyDate'] = pd.to_datetime(f_df1.Key.str.findall('\d\d\d\d\d\d\d\dT\d\d\d\d\d\dZ').apply(lambda x: x[0]), utc=True, errors='coerce')
         except:
-            print('No dates to parse in Keys')
+            # print('No dates to parse in Keys')
             f_df1['KeyDate'] = None
         f_df1['ETag'] = f_df1['ETag'].str.replace('"', '')
     else:
@@ -883,17 +884,38 @@ def process_real_station(dataset_id, coords, df, parameter, precision, s3, bucke
     return station_m
 
 
-def get_remote_station(s3, bucket, dataset_id):
+def get_remote_dataset(s3, bucket, dataset_id=None, ds_key=None):
     """
 
     """
-    stn_key = key_patterns['station'].format(dataset_id=dataset_id)
+    if isinstance(dataset_id, str):
+        ds_key = key_patterns['dataset'].format(dataset_id=dataset_id)
+
+    try:
+        obj1 = s3.get_object(Bucket=bucket, Key=ds_key)
+        rem_ds_body = obj1['Body']
+        jzstd = rem_ds_body.read()
+        rem_ds = read_json_zstd(jzstd)
+    except:
+        rem_ds = None
+
+    return rem_ds
+
+
+def get_remote_station(s3, bucket, dataset_id=None, station_id=None, stn_key=None):
+    """
+
+    """
+    if isinstance(dataset_id, str):
+        stn_key = key_patterns['station'].format(dataset_id=dataset_id, station_id=station_id)
+
     try:
         obj1 = s3.get_object(Bucket=bucket, Key=stn_key)
         rem_stn_body = obj1['Body']
-        rem_stn = orjson.loads(read_pkl_zstd(rem_stn_body.read(), unpickle=False))
+        jzstd = rem_stn_body.read()
+        rem_stn = read_json_zstd(jzstd)
     except:
-        rem_stn = []
+        rem_stn = None
 
     return rem_stn
 
@@ -918,6 +940,60 @@ def put_remote_station(s3, bucket, station, run_date=None):
     obj2 = s3.put_object(Bucket=bucket, Key=stn_key, Body=stn_obj, Metadata={'run_date': run_date_key}, ContentType='application/json')
 
     return stn5
+
+
+def put_remote_agg_stations(s3, bucket, dataset_id, threads=20):
+    """
+
+    """
+    base_stn_key = key_patterns['station']
+    agg_stn_key = key_patterns['stations']
+
+    stn_prefix = agg_stn_key.split('stations.json.zst')[0].format(dataset_id=dataset_id)
+
+    list1 = list_parse_s3(s3, bucket, stn_prefix)
+    list2 = list1[list1.Key.str.contains('station.json.zst')].copy()
+
+    # stn_list = [{'s3': s3, 'bucket': bucket, 'dataset_id': None, 'stn_key': k} for k in list2.Key]
+    stn_list = [[s3, bucket, None, None, k] for k in list2.Key]
+
+    output = ThreadPool(threads).starmap(get_remote_station, stn_list)
+
+    stns_obj = write_json_zstd(output)
+
+    run_date_key = make_run_date_key()
+    stns_key = agg_stn_key.format(dataset_id=dataset_id)
+    s3.put_object(Body=stns_obj, Bucket=bucket, Key=stns_key, ContentType='application/json', Metadata={'run_date': run_date_key})
+
+    return output
+
+
+def put_remote_agg_datasets(s3, bucket, threads=20):
+    """
+
+    """
+    base_ds_key = key_patterns['dataset']
+    agg_ds_key = key_patterns['datasets']
+
+    ds_prefix = agg_ds_key.split('datasets.json.zst')[0]
+
+    list1 = list_parse_s3(s3, bucket, ds_prefix)
+    list2 = list1[list1.Key.str.contains('dataset.json.zst')].copy()
+
+    # ds_list = [{'s3': s3, 'bucket': bucket, 'dataset_id': None, 'ds_key': k} for k in list2.Key]
+    ds_list = [[s3, bucket, None, k] for k in list2.Key]
+
+    output = ThreadPool(threads).starmap(get_remote_dataset, ds_list)
+
+    dss_obj = write_json_zstd(output)
+
+    run_date_key = make_run_date_key()
+    dss_key = agg_ds_key
+    s3.put_object(Body=dss_obj, Bucket=bucket, Key=dss_key, ContentType='application/json', Metadata={'run_date': run_date_key})
+
+    return output
+
+
 
 
 # def update_remote_stations(s3, bucket, dataset_id, station_list, run_date=None):
