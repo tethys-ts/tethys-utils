@@ -46,6 +46,21 @@ class S3ObjectKey(BaseModel):
     modified_date: datetime = Field(..., description='The modification date of the last edit.')
 
 
+# class StationBase(BaseModel):
+#     """
+#     Contains the base station data.
+#     """
+#     station_id: str = Field(..., description='station uuid based on the geometry')
+#     ref: str = None
+#     name: str = None
+#     osm_id: int = None
+#     # virtual_station: bool
+#     lon: float
+#     lat: float
+#     altitude: float
+#     properties: Dict = Field(None, description='Any additional station specific properties.')
+
+
 class Station(BaseModel):
     """
     Contains the station data of a dataset.
@@ -57,7 +72,7 @@ class Station(BaseModel):
     osm_id: int = None
     virtual_station: bool
     geometry: Geometry
-    altitude: float = None
+    altitude: float
     stats: Stats
     time_series_object_key: S3ObjectKey
     properties: Dict = Field(None, description='Any additional station specific properties.')
@@ -68,7 +83,7 @@ class Dataset(BaseModel):
     Dataset data.
     """
     dataset_id: str = Field(..., description='The unique dataset uuid.')
-    station_object_key: str = Field(..., description='The object key to the stations data.')
+    station_object_key: str = Field(None, description='The object key to the stations data.')
     feature: str = Field(..., description='The hydrologic feature associated with the dataset.')
     parameter: str = Field(..., description='The recorded observation parameter.')
     method: str = Field(..., description='The way the recorded observation was obtained.')

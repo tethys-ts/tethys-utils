@@ -33,9 +33,11 @@ nc_ts_key_pattern = {
                     'H25': 'tethys/diff/{dataset_id}/{date}.H25.nc.zst'
                     }
 
-key_patterns = {'ts': 'tethys/latest/{dataset_id}/{station_id}/ts_data.H23.nc.zst',
-                'dataset': 'tethys/latest/datasets.json',
-                'station': 'tethys/latest/{dataset_id}/stations.json.zst'
+key_patterns = {'ts': 'tethys/latest/{dataset_id}/{station_id}/ts_data.nc.zst',
+                'datasets': 'tethys/latest/datasets.json.zst',
+                'stations': 'tethys/latest/{dataset_id}/stations.json.zst',
+                'station': 'tethys/latest/{dataset_id}/{station_id}/station.json.zst',
+                'dataset': 'tethys/latest/{dataset_id}/dataset.json.zst',
                 }
 
 base_ds_fields = ['feature', 'parameter', 'method', 'product_code', 'owner', 'aggregation_statistic', 'frequency_interval', 'utc_offset']
@@ -159,6 +161,49 @@ def make_run_date_key(run_date=None):
         raise TypeError('run_date must be None, Timestamp, or a string representation of a timestamp')
 
     return run_date_key
+
+
+def write_json_zstd(data, compress_level=1):
+    """
+    Serializer of a python dictionary to json using orjson then compressed using zstandard.
+
+    Parameters
+    ----------
+    data : dict
+        A dictionary that can be serialized to json using orjson.
+    compress_level : int
+        zstandard compression level.
+
+    Returns
+    -------
+    bytes object
+
+    """
+    json1 = orjson.dumps(data)
+    cctx = zstd.ZstdCompressor(level=compress_level)
+    c_obj = cctx.compress(json1)
+
+    return c_obj
+
+
+def read_json_zstd(obj):
+    """
+    Deserializer from a compressed zstandard json object to a dictionary.
+
+    Parameters
+    ----------
+    obj : bytes
+        The bytes object.
+
+    Returns
+    -------
+    Dict
+    """
+    dctx = zstd.ZstdDecompressor()
+    obj1 = dctx.decompress(obj)
+    dict1 = orjson.loads(obj1)
+
+    return dict1
 
 
 def write_pkl_zstd(obj, file_path=None, compress_level=1, pkl_protocol=pickle.HIGHEST_PROTOCOL):
@@ -287,7 +332,6 @@ def station_data_integrety_checks(data, attrs=None, encoding=None):
             raise ValueError('The station_data DataFrame field must have the data type(s): ' + str(essentials[c]))
 
     return data
-
 
 
 def data_to_xarray(ts_data, station_data, param_name, ts_attrs, ts_encoding, station_attrs=None, station_encoding=None, virtual_station=False, run_date=None, ancillary_variables=None, compression=False, compress_level=1):
@@ -698,44 +742,65 @@ def assign_ds_ids(datasets):
     return dss
 
 
-def update_remote_dataset(s3, bucket, datasets, run_date=None):
+def put_remote_dataset(s3, bucket, dataset, run_date=None):
     """
 
     """
     run_date_key = make_run_date_key(run_date)
 
-    ds_key = key_patterns['dataset']
-    try:
-        obj1 = s3.get_object(Bucket=bucket, Key=ds_key)
-        rem_ds_body = obj1['Body']
-        rem_ds = orjson.loads(rem_ds_body.read())
-    except:
-        rem_ds = []
+    dataset_id = dataset['dataset_id']
 
-    if rem_ds != datasets:
-        print('datasets are different, datasets.json will be updated')
-        all_ids = set([i['dataset_id'] for i in rem_ds])
-        all_ids.update(set([i['dataset_id'] for i in datasets]))
+    ds4 = Dataset(**dataset)
 
-        up_list = copy.deepcopy(rem_ds)
-        up_list = []
+    ds5 = orjson.loads(ds4.json(exclude_none=True))
 
-        for i in all_ids:
-            rem1 = [n for n in rem_ds if n['dataset_id'] == i]
-            new1 = [n for n in datasets if n['dataset_id'] == i]
+    ds_obj = write_json_zstd(ds5)
 
-            if new1:
-                up_list.append(new1[0])
-            else:
-                up_list.append(rem1[0])
+    ds_key = key_patterns['dataset'].format(dataset_id=dataset_id)
 
-        ds_json1 = orjson.dumps(up_list)
-        obj2 = s3.put_object(Bucket=bucket, Key=ds_key, Body=ds_json1, Metadata={'run_date': run_date_key}, ContentType='application/json')
-    else:
-        print('datasets are the same, datasets.json will not be updated')
-        up_list = rem_ds
+    obj2 = s3.put_object(Bucket=bucket, Key=ds_key, Body=ds_obj, Metadata={'run_date': run_date_key}, ContentType='application/json')
 
-    return up_list
+    return ds5
+
+
+# def update_remote_dataset(s3, bucket, dataset_id, dataset, run_date=None):
+#     """
+#
+#     """
+#     run_date_key = make_run_date_key(run_date)
+#
+#     ds_key = key_patterns['dataset']
+#     try:
+#         obj1 = s3.get_object(Bucket=bucket, Key=ds_key)
+#         rem_ds_body = obj1['Body']
+#         rem_ds = orjson.loads(rem_ds_body.read())
+#     except:
+#         rem_ds = []
+#
+#     if rem_ds != datasets:
+#         print('datasets are different, datasets.json will be updated')
+#         all_ids = set([i['dataset_id'] for i in rem_ds])
+#         all_ids.update(set([i['dataset_id'] for i in datasets]))
+#
+#         up_list = copy.deepcopy(rem_ds)
+#         up_list = []
+#
+#         for i in all_ids:
+#             rem1 = [n for n in rem_ds if n['dataset_id'] == i]
+#             new1 = [n for n in datasets if n['dataset_id'] == i]
+#
+#             if new1:
+#                 up_list.append(new1[0])
+#             else:
+#                 up_list.append(rem1[0])
+#
+#         ds_json1 = orjson.dumps(up_list)
+#         obj2 = s3.put_object(Bucket=bucket, Key=ds_key, Body=ds_json1, Metadata={'run_date': run_date_key}, ContentType='application/json')
+#     else:
+#         print('datasets are the same, datasets.json will not be updated')
+#         up_list = rem_ds
+#
+#     return up_list
 
 
 def create_geometry(coords, geo_type='Point'):
@@ -822,47 +887,68 @@ def get_remote_station(s3, bucket, dataset_id):
     return rem_stn
 
 
-def update_remote_stations(s3, bucket, dataset_id, station_list, run_date=None):
+def put_remote_station(s3, bucket, station, run_date=None):
     """
 
     """
-    if run_date is None:
-        run_date = pd.Timestamp.today(tz='utc')
-        run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
-    elif isinstance(run_date, pd.Timestamp):
-        run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
-    elif isinstance(run_date, str):
-        run_date_key = run_date
-    else:
-        raise TypeError('run_date must be None, Timestamp, or a string representation of a timestamp')
+    run_date_key = make_run_date_key(run_date)
 
-    rem_stn = get_remote_station(s3, bucket, dataset_id)
+    dataset_id = station['dataset_id']
+    station_id = station['station_id']
 
-    if rem_stn != station_list:
-        print('stations are different, stations.json.zst will be updated')
-        all_ids = set([i['station_id'] for i in rem_stn])
-        all_ids.update(set([i['station_id'] for i in station_list]))
+    stn4 = Station(**station)
 
-        up_list = copy.deepcopy(rem_stn)
-        up_list = []
+    stn5 = orjson.loads(stn4.json(exclude_none=True))
 
-        for i in all_ids:
-            rem1 = [n for n in rem_stn if n['station_id'] == i]
-            new1 = [n for n in station_list if n['station_id'] == i]
+    stn_obj = write_json_zstd(stn5)
 
-            if new1:
-                up_list.append(new1[0])
-            else:
-                up_list.append(rem1[0])
+    stn_key = key_patterns['station'].format(dataset_id=dataset_id, station_id=station_id)
 
-        stn_json1 = write_pkl_zstd(orjson.dumps(up_list))
-        obj2 = s3.put_object(Bucket=bucket, Key=stn_key, Body=stn_json1, Metadata={'run_date': run_date_key}, ContentType='application/json')
-    else:
-        print('stations are the same, stations.json.zst will not be updated')
-        up_list = rem_stn
+    obj2 = s3.put_object(Bucket=bucket, Key=stn_key, Body=stn_obj, Metadata={'run_date': run_date_key}, ContentType='application/json')
 
-    return up_list
+    return stn5
 
+
+# def update_remote_stations(s3, bucket, dataset_id, station_list, run_date=None):
+#     """
+#
+#     """
+#     if run_date is None:
+#         run_date = pd.Timestamp.today(tz='utc')
+#         run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
+#     elif isinstance(run_date, pd.Timestamp):
+#         run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
+#     elif isinstance(run_date, str):
+#         run_date_key = run_date
+#     else:
+#         raise TypeError('run_date must be None, Timestamp, or a string representation of a timestamp')
+#
+#     rem_stn = get_remote_station(s3, bucket, dataset_id)
+#
+#     if rem_stn != station_list:
+#         print('stations are different, stations.json.zst will be updated')
+#         all_ids = set([i['station_id'] for i in rem_stn])
+#         all_ids.update(set([i['station_id'] for i in station_list]))
+#
+#         up_list = copy.deepcopy(rem_stn)
+#         up_list = []
+#
+#         for i in all_ids:
+#             rem1 = [n for n in rem_stn if n['station_id'] == i]
+#             new1 = [n for n in station_list if n['station_id'] == i]
+#
+#             if new1:
+#                 up_list.append(new1[0])
+#             else:
+#                 up_list.append(rem1[0])
+#
+#         stn_json1 = write_pkl_zstd(orjson.dumps(up_list))
+#         obj2 = s3.put_object(Bucket=bucket, Key=stn_key, Body=stn_json1, Metadata={'run_date': run_date_key}, ContentType='application/json')
+#     else:
+#         print('stations are the same, stations.json.zst will not be updated')
+#         up_list = rem_stn
+#
+#     return up_list
 
 #########################################
 ### Testing
