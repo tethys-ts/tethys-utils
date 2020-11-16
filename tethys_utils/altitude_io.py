@@ -22,9 +22,17 @@ def koordinates_raster_query(base_url: str, key: str, layer_id: (int, str), lon:
     resp = requests.get(url_request)
 
     if resp.ok:
-        bands = resp.json()['rasterQuery']['layers'][str(layer_id)]['bands']
+        layer1 = resp.json()['rasterQuery']['layers'][str(layer_id)]
 
-        return bands
+        status = layer1['status']
+
+        if status == 'ok':
+            bands = layer1['bands']
+
+            return bands
+        else:
+            print('status is: ' + status)
+            return None
 
     else:
         return resp.content.decode()

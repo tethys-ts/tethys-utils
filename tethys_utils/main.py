@@ -274,7 +274,7 @@ def put_s3_object(s3, bucket, obj, dataset_id, station_id, run_date, content_typ
 
     """
     run_date_key = make_run_date_key(run_date)
-    ts_key = ts_key_pattern.format(dataset_id=dataset_id, station_id=station_id)
+    ts_key = key_patterns['ts'].format(dataset_id=dataset_id, station_id=station_id)
     s3.put_object(Body=obj, Bucket=bucket, Key=ts_key, ContentType=content_type, Metadata={'run_date': run_date_key})
 
     return ts_key
@@ -323,8 +323,9 @@ def ts_data_integrety_checks(data, param_name, attrs, encoding, ancillary_variab
 
     if isinstance(encoding, dict):
         for col in ts_data_cols:
-            if not col in encoding:
-                raise ValueError(col + ' must be in the encoding dict')
+            if not col in ts_no_attrs_list:
+                if not col in encoding:
+                    raise ValueError(col + ' must be in the encoding dict')
 
     return data
 
