@@ -70,9 +70,6 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
         encoding_keys = ['scale_factor', 'dtype', '_FillValue']
         base_keys = ['feature', 'parameter', 'method', 'product_code', 'owner', 'aggregation_statistic', 'frequency_interval', 'utc_offset']
 
-        base_url = param['source']['api_endpoint']
-        hts = param['source']['hts']
-
         # nc_type = param['source']['nc_type']
         # base_key_pattern = nc_ts_key_pattern[nc_type]
         last_run_key_pattern = key_patterns['ts']
@@ -324,9 +321,6 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
         encoding_keys = ['scale_factor', 'dtype', '_FillValue']
         base_keys = ['feature', 'parameter', 'method', 'product_code', 'owner', 'aggregation_statistic', 'frequency_interval', 'utc_offset']
 
-        base_url = param['source']['api_endpoint']
-        hts = param['source']['hts']
-
         last_run_key_pattern = key_patterns['ts']
 
         stn_key_pattern = key_patterns['station']
@@ -358,7 +352,7 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
             print(meas)
 
             ### Pull out stations
-            stns1 = site_list(base_url, hts, location='LatLong', measurement=meas)
+            stns1 = ws.site_list(base_url, hts, location='LatLong', measurement=meas)
             stns2 = stns1[~((stns1.lat < -47.5) & (stns1.lat > -34) & (stns1.lon > 166) & (stns1.lon < 179))].dropna().copy()
             stns2.rename(columns={'SiteName': 'ref'}, inplace=True)
 
