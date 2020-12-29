@@ -34,11 +34,11 @@ nc_ts_key_pattern = {
                     'H25': 'tethys/diff/{dataset_id}/{date}.H25.nc.zst'
                     }
 
-key_patterns = {'ts': 'tethys/latest/{dataset_id}/{station_id}/ts_data.nc.zst',
-                'datasets': 'tethys/latest/datasets.json.zst',
-                'stations': 'tethys/latest/{dataset_id}/stations.json.zst',
-                'station': 'tethys/latest/{dataset_id}/{station_id}/station.json.zst',
-                'dataset': 'tethys/latest/{dataset_id}/dataset.json.zst',
+key_patterns = {'results': 'tethys/v2/{dataset_id}/{station_id}/{run_date}/results.nc.zst',
+                'datasets': 'tethys/v2/datasets.json.zst',
+                'stations': 'tethys/v2/{dataset_id}/stations.json.zst',
+                'station': 'tethys/v2/{dataset_id}/{station_id}/station.json.zst',
+                'dataset': 'tethys/v2/{dataset_id}/dataset.json.zst',
                 }
 
 base_ds_fields = ['feature', 'parameter', 'method', 'product_code', 'owner', 'aggregation_statistic', 'frequency_interval', 'utc_offset']
@@ -269,18 +269,18 @@ def read_pkl_zstd(obj, unpickle=True):
     return obj1
 
 
-def put_s3_object(s3, bucket, obj, dataset_id, station_id, run_date, content_type='application/zstd'):
+def put_s3_object(s3, bucket, obj, dataset_id, station_id, run_date=None, content_type='application/zstd'):
     """
 
     """
     run_date_key = make_run_date_key(run_date)
-    ts_key = key_patterns['ts'].format(dataset_id=dataset_id, station_id=station_id)
+    ts_key = key_patterns['results'].format(dataset_id=dataset_id, station_id=station_id, run_date=run_date_key)
     s3.put_object(Body=obj, Bucket=bucket, Key=ts_key, ContentType=content_type, Metadata={'run_date': run_date_key})
 
     return ts_key
 
 
-def ts_data_integrety_checks(data, param_name, attrs, encoding, ancillary_variables=None):
+def results_integrety_checks(data, param_name, attrs, encoding, ancillary_variables=None):
     """
 
     """
@@ -303,13 +303,13 @@ def ts_data_integrety_checks(data, param_name, attrs, encoding, ancillary_variab
 
     for c in ts_essential_list:
         if not c in ts_data_cols:
-            raise ValueError('The ts_data DataFrame must contain the column: ' + str(c))
+            raise ValueError('The DataFrame must contain the column: ' + str(c))
 
     ts_data_index = list(data.index.names)
 
     for c in ts_index_list:
         if not c in ts_data_index:
-            raise ValueError('The ts_data DataFrame must contain the index: ' + str(c))
+            raise ValueError('The DataFrame must contain the index: ' + str(c))
 
     if isinstance(attrs, dict):
         attrs_keys = list(attrs.keys())
@@ -347,27 +347,27 @@ def station_data_integrety_checks(data, attrs=None, encoding=None):
     return data
 
 
-def data_to_xarray(ts_data, station_data, param_name, ts_attrs, ts_encoding, station_attrs=None, station_encoding=None, virtual_station=False, run_date=None, ancillary_variables=None, compression=False, compress_level=1):
+def data_to_xarray(results_data, station_data, param_name, results_attrs, results_encoding, station_attrs=None, station_encoding=None, virtual_station=False, run_date=None, ancillary_variables=None, compression=False, compress_level=1):
     """
     Converts DataFrames of time series data, station data, and other attributes to an Xarray Dataset. Optionally has Zstandard compression.
 
     Parameters
     ----------
-    ts_data : DataFrame
+    results_data : DataFrame
         DataFrame of the core parameter and associated ancillary variable indexed by time and height.
         The index should have the names of "time" and "height". "height" is height above the surface. So if the parameter represents a surface measurement, then the height should be 0.
     station_data : dict
         Dictionary of the station data. Should include a station_id which should be a hashed string from blake2b (digest_size=12) of the geojson geometry. The minimum necessary other fields should include lat, lon, and altitude. Data owner specific other fields can include "ref" for the reference id and "name" for the station name.
     param_name : str
         The core parameter name of the column in the ts_data DataFrame.
-    ts_attrs : dict
-        A dictionary of the xarray/netcdf attributes of the ts_data. Where the keys are the columns and the values are the attributes.
-    ts_encoding : dict
-        A dictionary of the xarray/netcdf encodings for the ts_data.
+    results_attrs : dict
+        A dictionary of the xarray/netcdf attributes of the results_data. Where the keys are the columns and the values are the attributes.
+    results_encoding : dict
+        A dictionary of the xarray/netcdf encodings for the results_data.
     station_attrs : dict or None
-        Similer to ts_attr, but can be omitted if no extra fields are included in station_data.
+        Similer to results_attr, but can be omitted if no extra fields are included in station_data.
     station_encoding : dict or None
-        Similer to ts_encoding, but can be omitted if no extra fields are included in station_data.
+        Similer to results_encoding, but can be omitted if no extra fields are included in station_data.
 
     Returns
     -------
@@ -377,7 +377,7 @@ def data_to_xarray(ts_data, station_data, param_name, ts_attrs, ts_encoding, sta
     ## Integrity Checks
 
     # Time series data
-    ts_data1 = ts_data_integrety_checks(ts_data, param_name, ts_attrs, ts_encoding, ancillary_variables)
+    ts_data1 = results_data_integrety_checks(results_data, param_name, ts_attrs, ts_encoding, ancillary_variables)
 
     # Station data
     station_data1 = station_data_integrety_checks(station_data)
@@ -395,9 +395,9 @@ def data_to_xarray(ts_data, station_data, param_name, ts_attrs, ts_encoding, sta
     if 'ref' in station_data.keys():
         attrs1.update({'ref': {'long_name': 'station reference id given by the owner'}})
 
-    ts_cols = list(ts_data.columns)
+    ts_cols = list(results_data.columns)
 
-    attrs1.update(ts_attrs)
+    attrs1.update(results_attrs)
     if 'cf_standard_name' in attrs1[param_name]:
         attrs1[param_name]['standard_name'] = attrs1[param_name].pop('cf_standard_name')
     attrs1.update({'height': {'standard_name': 'height', 'long_name': 'vertical distance above the surface', 'units': 'm', 'positive': 'up'}, 'time': {'standard_name': 'time', 'long_name': 'start_time'}})
@@ -415,7 +415,7 @@ def data_to_xarray(ts_data, station_data, param_name, ts_attrs, ts_encoding, sta
 
     encoding1.update({'lon': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.00001}, 'lat': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.00001}, 'altitude': {'dtype': 'int32', '_FillValue': -9999, 'scale_factor': 0.001}})
 
-    height = pd.to_numeric(ts_data.reset_index()['height'], downcast='integer')
+    height = pd.to_numeric(results_data.reset_index()['height'], downcast='integer')
 
     if 'int' in height.dtype.name:
         height_enc = {'dtype': height.dtype.name, '_FillValue': -9999}
@@ -425,14 +425,14 @@ def data_to_xarray(ts_data, station_data, param_name, ts_attrs, ts_encoding, sta
     else:
         raise TypeError('height should be either an int or a float')
 
-    encoding1.update(ts_encoding)
+    encoding1.update(results_encoding)
     encoding1.update({'time': {'_FillValue': -99999999, 'units': "days since 1970-01-01 00:00:00"}, 'height': height_enc})
     if 'modified_date' in ts_cols:
         encoding1.update({'modified_date': {'_FillValue': -99999999, 'units': "days since 1970-01-01 00:00:00"}})
 
     ## Create the Xarray Dataset
 
-    ds1 = ts_data.to_xarray()
+    ds1 = results_data.to_xarray()
     for k, v in station_data.items():
         ds1[k] = v
 
@@ -451,7 +451,7 @@ def data_to_xarray(ts_data, station_data, param_name, ts_attrs, ts_encoding, sta
         if a in ds1:
             ds1[a].attrs = val
 
-    ds_mapping = ts_attrs[param_name]
+    ds_mapping = results_attrs[param_name]
     title_str = '{agg_stat} {parameter} in {units} of the {feature} by a {method} owned by {owner}'.format(agg_stat=ds_mapping['aggregation_statistic'], parameter=ds_mapping['parameter'], units=ds_mapping['units'], feature=ds_mapping['feature'], method=ds_mapping['method'], owner=ds_mapping['owner'])
 
     run_date_key = make_run_date_key(run_date)

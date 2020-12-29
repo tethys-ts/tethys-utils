@@ -43,8 +43,6 @@ class S3ObjectKey(BaseModel):
     content_length: int
     etag: str
     run_date: datetime
-    modified_date: datetime = Field(..., description='The modification date of the last edit.')
-
 
 # class StationBase(BaseModel):
 #     """
@@ -74,8 +72,9 @@ class Station(BaseModel):
     geometry: Geometry
     altitude: float
     stats: Stats
-    time_series_object_key: S3ObjectKey
+    time_series_object_key: List[S3ObjectKey]
     properties: Dict = Field(None, description='Any additional station specific properties.')
+    modified_date: datetime = Field(..., description='The modification date of the last edit.')
 
 
 class Dataset(BaseModel):
