@@ -1057,24 +1057,33 @@ def put_remote_agg_datasets(s3, bucket, threads=20):
     return output
 
 
-def compare_datasets_from_s3(s3, bucket, dataset_id, station_id, new_data):
+def compare_datasets_from_s3(s3, bucket, new_data):
     """
 
     """
+    ## Determine the parameter, station_id, and dataset_id
+    vars1 = list(new_data.variables)
+    dataset_id = [new_data[v].attrs['dataset_id'] for v in vars1 if 'dataset_id' in new_data[v].attrs][0]
+    station_id = str(new_data['station_id'].values)
+
     key_dict = {'dataset_id': dataset_id, 'station_id': station_id}
 
-    try:
-        prefix_key = key_patterns['results'].split('{run_date}')[0].format(**key_dict)
-        all_keys = list_parse_s3(s3, param['remote']['bucket'], prefix_key)
-        last_key = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()].iloc[0]['Key']
-        obj1 = s3.get_object(Bucket=param['remote']['bucket'], Key=last_key)
+    ## Get list of keys
+    prefix_key = key_patterns['results'].split('{run_date}')[0].format(**key_dict)
+    all_keys = list_parse_s3(s3, bucket, prefix_key)
+    last_key1 = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()]
+
+    ## Get previous data and compare
+    if not last_key1.empty:
+        last_key = last_key1.iloc[0]['Key']
+        obj1 = s3.get_object(Bucket=bucket, Key=last_key)
         b1 = obj1['Body'].read()
         p_old_one = read_pkl_zstd(b1, False)
         xr_old_one = xr.open_dataset(p_old_one)
         xr_old_one['time'] = xr_old_one['time'].dt.round('s')
 
         up1 = compare_xrs(xr_old_one, new_data)
-    except:
+    else:
         print('No prior data found in S3. All data will be returned.')
         up1 = new_data.copy()
 
