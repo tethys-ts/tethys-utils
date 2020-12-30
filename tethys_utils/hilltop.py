@@ -190,22 +190,6 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
             for i, row in mtypes_df3.iterrows():
                 print(row.ref)
 
-                # new_to_date = row.To.round('D') - pd.DateOffset(hours=36)
-
-                # stn = [s for s in old_stns1 if s['station_id'] == row.station_id]
-
-                # if len(stn) > 0:
-                #     old_to_date = pd.Timestamp(stn[0]['stats']['to_date']).tz_localize(None)
-                # else:
-                #     old_to_date = pd.Timestamp('1900-01-01')
-                #
-                # if new_to_date > old_to_date:
-                #
-                #     old_to_date1 = old_to_date - pd.DateOffset(hours=132) - pd.DateOffset(seconds=1)
-                #
-                #     if old_to_date1 < row.From:
-                #         old_to_date1 = row.From
-
                 print('- Extracting data...')
                 timer = 5
                 while timer > 0:
@@ -250,50 +234,27 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
                 df4 = ts_data1.copy()
                 df4.set_index(['time', 'height'], inplace=True)
 
-                # if qual_col in df4.columns:
-                #     # df4_up[qual_col] = pd.to_numeric(df4_up[qual_col], errors='coerce', downcast='integer')
-                #     df4[qual_col] = pd.to_numeric(df4[qual_col], errors='coerce', downcast='integer')
-                #     ancillary_variables = [qual_col, 'modified_date']
-                # else:
                 ancillary_variables = ['modified_date']
 
-                # p_up1 = df_to_xarray(df4_up, nc_type, parameter, attrs1, encoding1, run_date_key, ancillary_variables, True)
                 new1 = data_to_xarray(df4, stn, parameter, attrs1, encoding1, run_date=run_date_key, ancillary_variables=ancillary_variables)
 
                 ## Compare to last run
                 print('Compare to last run')
-                # site_id = row.Site.replace(' ', '_').replace('/', '')
 
-                key_dict = base_key_dict.copy()
-                key_dict.update({'station_id': stn_id})
-
-                try:
-                    prefix_key = results_key_pattern.split('{run_date}')[0].format(**key_dict)
-                    all_keys = list_parse_s3(s3, param['remote']['bucket'], prefix_key)
-                    last_key = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()].iloc[0]['Key']
-                    obj1 = s3.get_object(Bucket=param['remote']['bucket'], Key=last_key)
-                    b1 = obj1['Body'].read()
-                    p_old_one = read_pkl_zstd(b1, False)
-                    xr_old_one = xr.open_dataset(p_old_one)
-
-                    up1 = compare_xrs(xr_old_one, new1)
-                except:
-                    print('No prior data found. All data will be saved.')
-                    up1 = new1.copy()
+                up1 = compare_datasets_from_s3(s3, param['remote']['bucket'], ds['dataset_id'], stn_id, new1)
 
                 ## Process data
                 if isinstance(up1, xr.Dataset):
 
-                    ## Save updated data
-                    print('Save updated data')
-                    key_dict.update({'run_date': run_date_key})
+                    ## Save results
+                    print('Save results')
+
+                    key_dict = base_key_dict.copy()
+                    key_dict.update({'run_date': run_date_key, 'station_id': stn_id})
                     new_key = results_key_pattern.format(**key_dict)
 
                     cctx = zstd.ZstdCompressor(level=1)
                     c_obj = cctx.compress(up1.to_netcdf())
-
-                    ## Save last complete data
-                    print('Save last complete data')
 
                     s3.put_object(Body=c_obj, Bucket=param['remote']['bucket'], Key=new_key, ContentType='application/zstd', Metadata={'run_date': run_date_key})
 
@@ -400,20 +361,23 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
             mtypes_df = mtypes_df[mtypes_df.Measurement == meas].copy()
 
             ## Make corrections to mtypes
+            mtypes_df['corrections'] = False
+
             if station_mtype_corrections is not None:
                 for i, f in station_mtype_corrections.items():
                     mtypes_df.loc[(mtypes_df.Site == i[0]) & (mtypes_df.Measurement == i[1]), 'From'] = f
+                    mtypes_df.loc[(mtypes_df.Site == i[0]) & (mtypes_df.Measurement == i[1]), 'corrections'] = True
 
             # save_folder_flag = set()
             stns_dict = {d['dataset_id']: [] for d in dataset_list}
 
             ## Update sites with altitude
+            print('Update sites with altitude')
             alt1 = []
             for i, row in stns2.iterrows():
                 print(row['station_id'])
                 r1 = koordinates_raster_query('https://data.linz.govt.nz', param['source']['koordinates_key'], '51768', row.lon, row.lat)
                 alt1.extend(r1)
-            # alt1 = stns2.apply(lambda x: koordinates_raster_query('https://data.linz.govt.nz', param['source']['koordinates_key'], '51768', x.lon, x.lat)[0], axis=1)
 
             alt2 = []
             for a in alt1:
@@ -428,27 +392,24 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
             if not mtypes_df.empty:
 
                 ##  Iterate through each stn
+                print('Iterate through each station')
                 for i, row in mtypes_df.iterrows():
                     print(row.Site)
 
                     ## Get the data out
                     print('- Extracting data...')
+
+                    bad_error = False
                     timer = 5
                     while timer > 0:
                         ts_data_list = []
 
                         try:
-                            start_date = row.From
-                            while True:
-                                sleep(3)
-                                to_date = start_date + pd.DateOffset(years=20)
-                                if to_date > row.To:
-                                    to_date = row.To
-                                ts_data_chunk = ws.get_data(base_url, hts, row.Site, row.Measurement, from_date=str(start_date), to_date=str(to_date), quality_codes=True)
-                                ts_data_list.append(ts_data_chunk)
-                                start_date = to_date
-                                if to_date >= row.To:
-                                    break
+                            sleep(1)
+                            if row['corrections']:
+                                ts_data = ws.get_data(base_url, hts, row.Site, row.Measurement, from_date=str(row.From), to_date=str(row.To), quality_codes=True)
+                            else:
+                                ts_data = ws.get_data(base_url, hts, row.Site, row.Measurement, quality_codes=True)
 
                             break
                         except requests.exceptions.ConnectionError as err:
@@ -457,16 +418,18 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
                             sleep(30)
                         except ValueError as err:
                             print(row.Site + ' and ' + row.Measurement + ' error: ' + str(err))
+                            bad_error = True
                             break
                         except Exception as err:
                             print(str(err))
                             timer = timer - 1
                             sleep(30)
 
-                    if timer == 0:
-                        raise ValueError('The Hilltop request tried too many times...the server is probably down')
+                        if timer == 0:
+                            raise ValueError('The Hilltop request tried too many times...the server is probably down')
 
-                    ts_data = pd.concat(ts_data_list)
+                    if bad_error:
+                        continue
 
                     stn = stns2[stns2.ref == row.Site].iloc[0].to_dict()
                     stn.pop('geo')
@@ -555,38 +518,21 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
 
                         ## Compare to last run
                         print('Compare to last run')
-                        # site_id = row.Site.replace(' ', '_').replace('/', '')
 
-                        key_dict = base_key_dict.copy()
-                        key_dict.update({'station_id': stn_id})
-
-                        try:
-                            prefix_key = results_key_pattern.split('{run_date}')[0].format(**key_dict)
-                            all_keys = list_parse_s3(s3, param['remote']['bucket'], prefix_key)
-                            last_key = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()].iloc[0]['Key']
-                            obj1 = s3.get_object(Bucket=param['remote']['bucket'], Key=last_key)
-                            b1 = obj1['Body'].read()
-                            p_old_one = read_pkl_zstd(b1, False)
-                            xr_old_one = xr.open_dataset(p_old_one)
-
-                            up1 = compare_xrs(xr_old_one, new1)
-                        except:
-                            print('No prior data found. All data will be saved.')
-                            up1 = new1.copy()
+                        up1 = compare_datasets_from_s3(s3, param['remote']['bucket'], ds['dataset_id'], stn_id, new1)
 
                         ## Process data
                         if isinstance(up1, xr.Dataset):
 
-                            ## Save updated data
-                            print('Save updated data')
-                            key_dict.update({'run_date': run_date_key})
+                            ## Save results
+                            print('Save results')
+                            key_dict = base_key_dict.copy()
+                            key_dict.update({'station_id': stn_id, 'run_date': run_date_key})
+
                             new_key = results_key_pattern.format(**key_dict)
 
                             cctx = zstd.ZstdCompressor(level=1)
                             c_obj = cctx.compress(up1.to_netcdf())
-
-                            ## Save last complete data
-                            print('Save last complete data')
 
                             s3.put_object(Body=c_obj, Bucket=param['remote']['bucket'], Key=new_key, ContentType='application/zstd', Metadata={'run_date': run_date_key})
 
@@ -597,14 +543,19 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
 
                             stn4 = orjson.loads(stn_m.json(exclude_none=True))
                             up_stns = put_remote_station(s3, param['remote']['bucket'], stn4, run_date=run_date)
-                            # stns_dict[ds['dataset_id']].append(stn4)
-
-                            # save_folder_flag.update([meas])
-
                         else:
                             print('No new data to update')
 
+    except Exception as err:
+        # print(err)
+        print(traceback.format_exc())
+        email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc())
+
+    try:
+
         ### Aggregate all stations for the dataset
+        print('Aggregate all stations for the dataset and all datasets in the bucket')
+
         for ds in dataset_list:
             ds_new = put_remote_dataset(s3, param['remote']['bucket'], ds)
             ds_stations = put_remote_agg_stations(s3, param['remote']['bucket'], ds['dataset_id'])

@@ -644,6 +644,7 @@ def compare_xrs(old_xr, new_xr):
     comp = compare_dfs(old_df, new_df, on, parameter)
 
     if comp.empty:
+        print('Nothing has changed. Returning empty DataFrame.')
         return comp
 
     else:
@@ -918,8 +919,9 @@ def process_object_keys(s3, bucket, prefix):
 
     """
     keys1 = list_parse_s3(s3, bucket, prefix)
+    keys2 = keys1[keys1.Key.str.contains('results.nc.zst')]
 
-    infos1 = [S3ObjectKey(key=row['Key'], bucket=bucket, content_length=row['Size'], etag=row['ETag'], run_date=row['KeyDate'], modified_date=row['LastModified']) for i, row in keys1.iterrows()]
+    infos1 = [S3ObjectKey(key=row['Key'], bucket=bucket, content_length=row['Size'], etag=row['ETag'], run_date=row['KeyDate'], modified_date=row['LastModified']) for i, row in keys2.iterrows()]
 
     return infos1
 
@@ -1054,6 +1056,29 @@ def put_remote_agg_datasets(s3, bucket, threads=20):
 
     return output
 
+
+def compare_datasets_from_s3(s3, bucket, dataset_id, station_id, new_data):
+    """
+
+    """
+    key_dict = {'dataset_id': dataset_id, 'station_id': station_id}
+
+    try:
+        prefix_key = key_patterns['results'].split('{run_date}')[0].format(**key_dict)
+        all_keys = list_parse_s3(s3, param['remote']['bucket'], prefix_key)
+        last_key = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()].iloc[0]['Key']
+        obj1 = s3.get_object(Bucket=param['remote']['bucket'], Key=last_key)
+        b1 = obj1['Body'].read()
+        p_old_one = read_pkl_zstd(b1, False)
+        xr_old_one = xr.open_dataset(p_old_one)
+        xr_old_one['time'] = xr_old_one['time'].dt.round('s')
+
+        up1 = compare_xrs(xr_old_one, new_data)
+    except:
+        print('No prior data found in S3. All data will be returned.')
+        up1 = new_data.copy()
+
+    return up1
 
 
 
