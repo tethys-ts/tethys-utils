@@ -12,7 +12,7 @@ import orjson
 from time import sleep
 import traceback
 from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats
-from tethys_utils.main import nc_ts_key_pattern, key_patterns, assign_ds_ids, put_remote_dataset, create_geometry, assign_station_id, grp_ts_agg, read_pkl_zstd, compare_xrs, data_to_xarray, process_real_station, put_remote_station, email_msg, s3_connection, agg_stat_mapping, put_remote_agg_datasets, put_remote_agg_stations, list_parse_s3, get_remote_station
+from tethys_utils.main import nc_ts_key_pattern, key_patterns, assign_ds_ids, put_remote_dataset, create_geometry, assign_station_id, grp_ts_agg, read_pkl_zstd, data_to_xarray, process_real_station, put_remote_station, email_msg, s3_connection, agg_stat_mapping, put_remote_agg_datasets, put_remote_agg_stations, list_parse_s3, get_remote_station, compare_datasets_from_s3
 from tethys_utils.altitude_io import koordinates_raster_query
 import urllib3
 
@@ -60,8 +60,6 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
 
         ### Read in parameters
 
-        # mod_local_tz = 'Pacific/Auckland'
-
         base_url = param['source']['api_endpoint']
         hts = param['source']['hts']
 
@@ -70,15 +68,9 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
         encoding_keys = ['scale_factor', 'dtype', '_FillValue']
         base_keys = ['feature', 'parameter', 'method', 'product_code', 'owner', 'aggregation_statistic', 'frequency_interval', 'utc_offset']
 
-        # nc_type = param['source']['nc_type']
-        # base_key_pattern = nc_ts_key_pattern[nc_type]
         results_key_pattern = key_patterns['results']
 
         stn_key_pattern = key_patterns['station']
-        # key_pattern = base_key_pattern + '.zst'
-        # last_run_key_pattern = 'last_run' + base_key_pattern[11:].split('{date}')[0] + '{station}.H23.nc.zst'
-
-        # data_dir = 'data'
 
         attrs = {'quality_code': {'standard_name': 'quality_flag', 'long_name': 'NEMS quality code', 'references': 'https://www.lawa.org.nz/media/16580/nems-quality-code-schema-2013-06-1-.pdf'}}
 
@@ -92,13 +84,7 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
         run_date_local = run_date.tz_convert(ts_local_tz).tz_localize(None).strftime('%Y-%m-%d %H:%M:%S')
         run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
 
-        # if not os.path.exists(data_dir):
-        #     os.mkdir(data_dir)
-
         s3 = s3_connection(param['remote']['connection_config'])
-
-        ### Get remote objects
-        # s3_objects1 = list_parse_s3(s3, param['remote']['bucket'], last_run_key_pattern.split('{dataset_id}')[0])
 
         ### Create dataset_ids, check if datasets.json exist on remote, and if not add it
         for ht_ds, ds_list in datasets.items():
@@ -139,9 +125,12 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
         mtypes_df2.loc[mtypes_df2.ref.str.contains('SW/'), 'feature'] = 'sw'
 
         ## Make corrections to mtypes
+        mtypes_df['corrections'] = False
+
         if station_mtype_corrections is not None:
             for i, f in station_mtype_corrections.items():
-                mtypes_df2.loc[(mtypes_df.Site == i[0]) & (mtypes_df2.Measurement == i[1]), 'From'] = f
+                mtypes_df.loc[(mtypes_df.Site == i[0]) & (mtypes_df.Measurement == i[1]), 'From'] = f
+                mtypes_df.loc[(mtypes_df.Site == i[0]) & (mtypes_df.Measurement == i[1]), 'corrections'] = True
 
         ## Update sites with altitude
         alt1 = mtypes_df2.apply(lambda x: koordinates_raster_query('https://data.linz.govt.nz', param['source']['koordinates_key'], '51768', x.lon, x.lat), axis=1)
@@ -154,8 +143,6 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
                 alt2.extend([-9999])
 
         mtypes_df2['altitude'] = alt2
-        # save_folder_flag = set()
-        # stns_dict = {d['dataset_id']: [] for d in dataset_list}
 
         for feat, ds in datasets.items():
 
@@ -179,23 +166,21 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
 
             base_key_dict = {'dataset_id': ds['dataset_id']}
 
-            # base_key_dict = {k: v for k, v in ds_mapping.items() if k in base_keys}
-
-            ## Open the old site list
-            # old_stns1 = get_remote_station(s3, param['remote']['bucket'], ds['dataset_id'])
-            # if old_stns1 is None:
-            #     old_stns1 = []
-
             ## Iterate through the sites/mtypes
             for i, row in mtypes_df3.iterrows():
                 print(row.ref)
 
                 print('- Extracting data...')
+                bad_error = False
                 timer = 5
                 while timer > 0:
 
                     try:
-                        ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, from_date=str(row.From), to_date=str(row.To), agg_method='Total', agg_interval='1 day')[1:].reset_index()
+                        sleep(1)
+                        if row['corrections']:
+                            ts_data = ws.get_data(base_url, hts, row.Site, row.Measurement, from_date=str(row.From), to_date=str(row.To), agg_method='Total', agg_interval='1 day')[1:].reset_index()
+                        else:
+                            ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, agg_method='Total', agg_interval='1 day')[1:].reset_index()
                         break
                     except requests.exceptions.ConnectionError as err:
                         print(row.ref + ' and ' + row.Measurement + ' error: ' + str(err))
@@ -203,6 +188,7 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
                         sleep(30)
                     except ValueError as err:
                         print(row.ref + ' and ' + row.Measurement + ' error: ' + str(err))
+                        bad_error = True
                         break
                     except Exception as err:
                         print(str(err))
@@ -211,6 +197,9 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
 
                 if timer == 0:
                     raise ValueError('The Hilltop request tried too many times...the server is probably down')
+
+                if bad_error:
+                    continue
 
                 ## Pre-Process data
                 print('Pre-Process data')
@@ -269,7 +258,16 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
                 else:
                     print('No new data to update')
 
+    except Exception as err:
+        # print(err)
+        print(traceback.format_exc())
+        email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc())
+
+    try:
+
         ### Aggregate all stations for the dataset
+        print('Aggregate all stations for the dataset and all datasets in the bucket')
+
         for ds in dataset_list:
             ds_stations = put_remote_agg_stations(s3, param['remote']['bucket'], ds['dataset_id'])
 
@@ -281,7 +279,7 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
     except Exception as err:
         # print(err)
         print(traceback.format_exc())
-        email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop water-use', traceback.format_exc())
+        email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc())
 
 
 
@@ -295,8 +293,6 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
     try:
 
         ### Read in parameters
-
-        # mod_local_tz = 'Pacific/Auckland'
 
         base_url = param['source']['api_endpoint']
         hts = param['source']['hts']
