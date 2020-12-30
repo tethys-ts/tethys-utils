@@ -12,7 +12,7 @@ import orjson
 from time import sleep
 import traceback
 from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats
-from tethys_utils.main import nc_ts_key_pattern, key_patterns, assign_ds_ids, put_remote_dataset, create_geometry, assign_station_id, grp_ts_agg, read_pkl_zstd, compare_dfs, data_to_xarray, process_real_station, put_remote_station, email_msg, s3_connection, agg_stat_mapping, put_remote_agg_datasets, put_remote_agg_stations
+from tethys_utils.main import nc_ts_key_pattern, key_patterns, assign_ds_ids, put_remote_dataset, create_geometry, assign_station_id, grp_ts_agg, read_pkl_zstd, compare_xrs, data_to_xarray, process_real_station, put_remote_station, email_msg, s3_connection, agg_stat_mapping, put_remote_agg_datasets, put_remote_agg_stations, list_parse_s3, get_remote_station
 from tethys_utils.altitude_io import koordinates_raster_query
 import urllib3
 
@@ -48,7 +48,7 @@ def convert_site_names(names, rem_m=True):
     return names2
 
 
-def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=None):
+def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=None, measurement='Abstraction Volume'):
     """
 
     """
@@ -72,7 +72,7 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
 
         # nc_type = param['source']['nc_type']
         # base_key_pattern = nc_ts_key_pattern[nc_type]
-        last_run_key_pattern = key_patterns['ts']
+        results_key_pattern = key_patterns['results']
 
         stn_key_pattern = key_patterns['station']
         # key_pattern = base_key_pattern + '.zst'
@@ -109,30 +109,31 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
         [dataset_list.extend([ds_list]) for ht_ds, ds_list in datasets.items()]
 
         ### Pull out stations
-        stns1 = ws.site_list(base_url, hts, location='LatLong', measurement='Abstraction Volume')
-        stns2 = stns1[~((stns1.lat < -47.5) & (stns1.lat > -34) & (stns1.lon > 166) & (stns1.lon < 179))].dropna().copy()
-        stns2.rename(columns={'SiteName': 'Site'}, inplace=True)
-
-        stns2['ref'] = convert_site_names(stns2.Site)
-        stns2 = stns2.dropna().drop_duplicates('ref').copy()
+        stns1 = ws.site_list(base_url, hts, location='LatLong') # There's a problem with Hilltop that requires running the site list without a measurement first...
+        stns1 = ws.site_list(base_url, hts, location='LatLong', measurement=measurement)
+        stns2 = stns1[(stns1.lat > -47.5) & (stns1.lat < -34) & (stns1.lon > 166) & (stns1.lon < 179)].dropna().copy()
+        stns2.rename(columns={'SiteName': 'ref'}, inplace=True)
 
         stns2['geo'] = stns2.apply(lambda x: create_geometry([x.lon, x.lat]), axis=1)
         stns2['station_id'] = stns2.apply(lambda x: assign_station_id(x.geo), axis=1)
+
+        stns2 = stns2.drop_duplicates('station_id').copy()
 
         ### Pull out the mtypes
         print('-Running through station/measurement combos')
 
         mtypes_list = []
-        for s in stns2.Site:
+        for s in stns2.ref:
             print(s)
             try:
-                meas1 = ws.measurement_list(base_url, hts, s, measurement='Abstraction Volume')
+                meas1 = ws.measurement_list(base_url, hts, s, measurement=measurement)
             except:
                 print('** station is bad')
             mtypes_list.append(meas1)
         mtypes_df = pd.concat(mtypes_list).reset_index()
-        mtypes_df = mtypes_df[mtypes_df.Measurement == 'Abstraction Volume'].copy()
-        mtypes_df2 = pd.merge(mtypes_df, stns2, on='Site')
+        mtypes_df = mtypes_df[mtypes_df.Measurement == measurement].copy()
+        mtypes_df.rename(columns={'Site': 'ref'}, inplace=True)
+        mtypes_df2 = pd.merge(mtypes_df, stns2, on='ref')
 
         mtypes_df2['feature'] = 'gw'
         mtypes_df2.loc[mtypes_df2.ref.str.contains('SW/'), 'feature'] = 'sw'
@@ -181,108 +182,131 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
             # base_key_dict = {k: v for k, v in ds_mapping.items() if k in base_keys}
 
             ## Open the old site list
-            old_stns1 = get_remote_station(s3, param['remote']['bucket'], ds['dataset_id'])
-            if old_stns1 is None:
-                old_stns1 = []
+            # old_stns1 = get_remote_station(s3, param['remote']['bucket'], ds['dataset_id'])
+            # if old_stns1 is None:
+            #     old_stns1 = []
 
             ## Iterate through the sites/mtypes
             for i, row in mtypes_df3.iterrows():
-                print(row.Site)
+                print(row.ref)
 
-                new_to_date = row.To.round('D') - pd.DateOffset(hours=36)
+                # new_to_date = row.To.round('D') - pd.DateOffset(hours=36)
 
-                stn = [s for s in old_stns1 if s['station_id'] == row.station_id]
+                # stn = [s for s in old_stns1 if s['station_id'] == row.station_id]
 
-                if len(stn) > 0:
-                    old_to_date = pd.Timestamp(stn[0]['stats']['to_date']).tz_localize(None)
-                else:
-                    old_to_date = pd.Timestamp('1900-01-01')
+                # if len(stn) > 0:
+                #     old_to_date = pd.Timestamp(stn[0]['stats']['to_date']).tz_localize(None)
+                # else:
+                #     old_to_date = pd.Timestamp('1900-01-01')
+                #
+                # if new_to_date > old_to_date:
+                #
+                #     old_to_date1 = old_to_date - pd.DateOffset(hours=132) - pd.DateOffset(seconds=1)
+                #
+                #     if old_to_date1 < row.From:
+                #         old_to_date1 = row.From
 
-                if new_to_date > old_to_date:
-
-                    old_to_date1 = old_to_date - pd.DateOffset(hours=132) - pd.DateOffset(seconds=1)
-
-                    if old_to_date1 < row.From:
-                        old_to_date1 = row.From
-
-                    print('- Extracting data...')
-                    timer = 5
-                    while timer > 0:
-
-                        try:
-                            ts_data = ws.get_data(base_url, hts, row.Site, row.Measurement, from_date=str(old_to_date1), to_date=str(row.To), agg_method='Total', agg_interval='1 day')[1:].reset_index()
-                            break
-                        except requests.exceptions.ConnectionError as err:
-                            print(row.Site + ' and ' + row.Measurement + ' error: ' + str(err))
-                            timer = timer - 1
-                            sleep(30)
-                        except ValueError as err:
-                            print(row.Site + ' and ' + row.Measurement + ' error: ' + str(err))
-                            break
-                        except Exception as err:
-                            print(str(err))
-                            timer = timer - 1
-                            sleep(30)
-
-                    if timer == 0:
-                        raise ValueError('The Hilltop request tried too many times...the server is probably down')
-
-                    ## Pre-Process data
-                    print('Pre-Process data')
-                    ts_data['DateTime'] = ts_data['DateTime'] - pd.DateOffset(days=1)
-
-                    ts_data1 = ts_data.drop(['Site', 'Measurement'], axis=1).rename(columns={ 'Value': parameter, 'DateTime': 'time'}).copy()
-
-                    ts_data1[parameter] = pd.to_numeric(ts_data1[parameter], errors='coerce')
-                    ts_data1['time'] = ts_data1['time'].dt.tz_localize(ts_local_tz).dt.tz_convert('utc').dt.tz_localize(None)
-                    ts_data1['height'] = 0
-
-                    ## Add to last data
-                    key_dict = base_key_dict.copy()
-                    key_dict.update({'station_id': row.station_id})
-
-                    last_key = last_run_key_pattern.format(**key_dict)
+                print('- Extracting data...')
+                timer = 5
+                while timer > 0:
 
                     try:
-                        obj1 = s3.get_object(Bucket=param['remote']['bucket'], Key=last_key)
-                        b1 = obj1['Body'].read()
-                        p_old_one = read_pkl_zstd(b1, False)
-                        xr_old_one = xr.open_dataset(p_old_one)
-                        old_one = xr_old_one[parameter].to_dataframe().droplevel('height').reset_index()
-                        old_one['time'] = old_one.time.dt.round('s')
-                        old_one[parameter] = old_one[parameter].round(precision)
+                        ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, from_date=str(row.From), to_date=str(row.To), agg_method='Total', agg_interval='1 day')[1:].reset_index()
+                        break
+                    except requests.exceptions.ConnectionError as err:
+                        print(row.ref + ' and ' + row.Measurement + ' error: ' + str(err))
+                        timer = timer - 1
+                        sleep(30)
+                    except ValueError as err:
+                        print(row.ref + ' and ' + row.Measurement + ' error: ' + str(err))
+                        break
+                    except Exception as err:
+                        print(str(err))
+                        timer = timer - 1
+                        sleep(30)
 
-                    except:
-                        print('No prior data found. All data will be saved.')
-                        old_one = pd.DataFrame()
+                if timer == 0:
+                    raise ValueError('The Hilltop request tried too many times...the server is probably down')
 
-                    if not old_one.empty:
-                        ts_data1 = pd.concat([old_one, ts_data1]).drop_duplicates(subset='time', keep='last')
+                ## Pre-Process data
+                print('Pre-Process data')
+                stn = mtypes_df2.loc[mtypes_df2.ref == row.ref, ['ref', 'lat', 'lon', 'altitude', 'station_id']].iloc[0].to_dict()
 
-                    ## Add in the station data and create the time series object
-                    stn_data = {'ref': row.ref, 'lat': float(row.lat), 'lon': float(row.lon), 'station_id': row.station_id, 'altitude': row.altitude}
+                stn_id = stn['station_id']
+                ref = stn['ref']
 
-                    p_all1 = data_to_xarray(ts_data1.set_index(['time', 'height']), stn_data, parameter, attrs1, encoding1, run_date_key, compression=True)
+                mod_date = pd.Timestamp.today(tz='utc').round('s').tz_localize(None)
 
-                    ## Save the data
-                    key_dict = base_key_dict.copy()
-                    key_dict.update({'station_id': row.station_id})
+                ts_data['DateTime'] = ts_data['DateTime'] - pd.DateOffset(days=1)
 
-                    last_key = last_run_key_pattern.format(**key_dict)
+                ts_data1 = ts_data.drop(['Site', 'Measurement'], axis=1).rename(columns={ 'Value': parameter, 'DateTime': 'time'}).copy()
 
+                ts_data1[parameter] = pd.to_numeric(ts_data1[parameter], errors='coerce')
+                ts_data1['time'] = ts_data1['time'].dt.tz_localize(ts_local_tz).dt.tz_convert('utc').dt.tz_localize(None)
+                ts_data1['height'] = 0
+                ts_data1['modified_date'] = mod_date
+
+                ## Convert to xarray
+                df4 = ts_data1.copy()
+                df4.set_index(['time', 'height'], inplace=True)
+
+                # if qual_col in df4.columns:
+                #     # df4_up[qual_col] = pd.to_numeric(df4_up[qual_col], errors='coerce', downcast='integer')
+                #     df4[qual_col] = pd.to_numeric(df4[qual_col], errors='coerce', downcast='integer')
+                #     ancillary_variables = [qual_col, 'modified_date']
+                # else:
+                ancillary_variables = ['modified_date']
+
+                # p_up1 = df_to_xarray(df4_up, nc_type, parameter, attrs1, encoding1, run_date_key, ancillary_variables, True)
+                new1 = data_to_xarray(df4, stn, parameter, attrs1, encoding1, run_date=run_date_key, ancillary_variables=ancillary_variables)
+
+                ## Compare to last run
+                print('Compare to last run')
+                # site_id = row.Site.replace(' ', '_').replace('/', '')
+
+                key_dict = base_key_dict.copy()
+                key_dict.update({'station_id': stn_id})
+
+                try:
+                    prefix_key = results_key_pattern.split('{run_date}')[0].format(**key_dict)
+                    all_keys = list_parse_s3(s3, param['remote']['bucket'], prefix_key)
+                    last_key = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()].iloc[0]['Key']
+                    obj1 = s3.get_object(Bucket=param['remote']['bucket'], Key=last_key)
+                    b1 = obj1['Body'].read()
+                    p_old_one = read_pkl_zstd(b1, False)
+                    xr_old_one = xr.open_dataset(p_old_one)
+
+                    up1 = compare_xrs(xr_old_one, new1)
+                except:
+                    print('No prior data found. All data will be saved.')
+                    up1 = new1.copy()
+
+                ## Process data
+                if isinstance(up1, xr.Dataset):
+
+                    ## Save updated data
+                    print('Save updated data')
+                    key_dict.update({'run_date': run_date_key})
+                    new_key = results_key_pattern.format(**key_dict)
+
+                    cctx = zstd.ZstdCompressor(level=1)
+                    c_obj = cctx.compress(up1.to_netcdf())
+
+                    ## Save last complete data
                     print('Save last complete data')
 
-                    s3.put_object(Body=p_all1, Bucket=param['remote']['bucket'], Key=last_key, ContentType='application/zstd', Metadata={'run_date': run_date_key})
+                    s3.put_object(Body=c_obj, Bucket=param['remote']['bucket'], Key=new_key, ContentType='application/zstd', Metadata={'run_date': run_date_key})
 
                     ## Process stn data
                     print('Save station data')
-                    stn_m = process_real_station(ds['dataset_id'], [float(stn_data['lon']), float(stn_data['lat'])], ts_data1, parameter, precision, s3, param['remote']['bucket'], last_key, ref=stn_data['ref'], altitude=stn_data['altitude'])
+
+                    stn_m = process_real_station(ds['dataset_id'], [float(stn['lon']), float(stn['lat'])], up1.squeeze('height')[parameter].drop('height').to_dataframe().reset_index(), parameter, precision, s3, param['remote']['bucket'], ref=stn['ref'], altitude=stn['altitude'], mod_date=run_date)
 
                     stn4 = orjson.loads(stn_m.json(exclude_none=True))
                     up_stns = put_remote_station(s3, param['remote']['bucket'], stn4, run_date=run_date)
 
                 else:
-                    print('No data to udapte')
+                    print('No new data to update')
 
         ### Aggregate all stations for the dataset
         for ds in dataset_list:
@@ -321,7 +345,7 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
         encoding_keys = ['scale_factor', 'dtype', '_FillValue']
         base_keys = ['feature', 'parameter', 'method', 'product_code', 'owner', 'aggregation_statistic', 'frequency_interval', 'utc_offset']
 
-        last_run_key_pattern = key_patterns['ts']
+        results_key_pattern = key_patterns['results']
 
         stn_key_pattern = key_patterns['station']
 
@@ -352,14 +376,15 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
             print(meas)
 
             ### Pull out stations
+            stns1 = ws.site_list(base_url, hts, location='LatLong') # There's a problem with Hilltop that requires running the site list without a measurement first...
             stns1 = ws.site_list(base_url, hts, location='LatLong', measurement=meas)
-            stns2 = stns1[~((stns1.lat < -47.5) & (stns1.lat > -34) & (stns1.lon > 166) & (stns1.lon < 179))].dropna().copy()
+            stns2 = stns1[(stns1.lat > -47.5) & (stns1.lat < -34) & (stns1.lon > 166) & (stns1.lon < 179)].dropna().copy()
             stns2.rename(columns={'SiteName': 'ref'}, inplace=True)
 
             stns2['geo'] = stns2.apply(lambda x: create_geometry([x.lon, x.lat]), axis=1)
             stns2['station_id'] = stns2.apply(lambda x: assign_station_id(x.geo), axis=1)
 
-            stns2 = stns2.drop_duplicates('station_id')
+            stns2 = stns2.drop_duplicates('station_id').copy()
 
             print('-Running through station/measurement combos')
 
@@ -383,7 +408,13 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
             stns_dict = {d['dataset_id']: [] for d in dataset_list}
 
             ## Update sites with altitude
-            alt1 = stns2.apply(lambda x: koordinates_raster_query('https://data.linz.govt.nz', param['source']['koordinates_key'], '51768', x.lon, x.lat)[0], axis=1)
+            alt1 = []
+            for i, row in stns2.iterrows():
+                print(row['station_id'])
+                r1 = koordinates_raster_query('https://data.linz.govt.nz', param['source']['koordinates_key'], '51768', row.lon, row.lat)
+                alt1.extend(r1)
+            # alt1 = stns2.apply(lambda x: koordinates_raster_query('https://data.linz.govt.nz', param['source']['koordinates_key'], '51768', x.lon, x.lat)[0], axis=1)
+
             alt2 = []
             for a in alt1:
                 try:
@@ -442,6 +473,7 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
 
                     stn_id = stn['station_id']
                     ref = stn['ref']
+                    mod_date = pd.Timestamp.today(tz='utc').round('s').tz_localize(None)
 
                     ## Iterate through each dataset
                     for ds in datasets[meas]:
@@ -504,78 +536,64 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
 
                         # df3['station_id'] = stn_id
                         df3.drop('ref', axis=1, inplace=True)
-                        df3['modified_date'] = run_date.tz_localize(None)
+                        df3['modified_date'] = mod_date
 
-                        ## Create original key name
+                        ## Convert to xarray
+                        df4 = df3.copy()
+                        df4['height'] = 0
+                        df4.set_index(['time', 'height'], inplace=True)
+
+                        if qual_col in df4.columns:
+                            # df4_up[qual_col] = pd.to_numeric(df4_up[qual_col], errors='coerce', downcast='integer')
+                            df4[qual_col] = pd.to_numeric(df4[qual_col], errors='coerce', downcast='integer')
+                            ancillary_variables = [qual_col, 'modified_date']
+                        else:
+                            ancillary_variables = ['modified_date']
+
+                        # p_up1 = df_to_xarray(df4_up, nc_type, parameter, attrs1, encoding1, run_date_key, ancillary_variables, True)
+                        new1 = data_to_xarray(df4, stn, parameter, attrs1, encoding1, run_date=run_date_key, ancillary_variables=ancillary_variables)
+
+                        ## Compare to last run
                         print('Compare to last run')
                         # site_id = row.Site.replace(' ', '_').replace('/', '')
+
                         key_dict = base_key_dict.copy()
                         key_dict.update({'station_id': stn_id})
 
-                        last_key = last_run_key_pattern.format(**key_dict)
-
                         try:
+                            prefix_key = results_key_pattern.split('{run_date}')[0].format(**key_dict)
+                            all_keys = list_parse_s3(s3, param['remote']['bucket'], prefix_key)
+                            last_key = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()].iloc[0]['Key']
                             obj1 = s3.get_object(Bucket=param['remote']['bucket'], Key=last_key)
                             b1 = obj1['Body'].read()
                             p_old_one = read_pkl_zstd(b1, False)
                             xr_old_one = xr.open_dataset(p_old_one)
-                            old_one = xr_old_one[parameter].to_dataframe().droplevel('height').reset_index()
-                            old_one['time'] = old_one.time.dt.round('s')
-                            old_one[parameter] = old_one[parameter].round(precision)
-                            old_mod_dates = xr_old_one['modified_date'].to_dataframe().droplevel('height').reset_index()
 
+                            up1 = compare_xrs(xr_old_one, new1)
                         except:
                             print('No prior data found. All data will be saved.')
-                            old_one = pd.DataFrame(columns=['time', parameter])
-                            old_mod_dates = pd.DataFrame(columns=['time', 'modified_date'])
-
-                        ## Compare to previous run
-                        df3[parameter] = df3[parameter].round(precision)
-                        res1 = compare_dfs(old_one, df3[['time', parameter]], on=['time'])
-                        # res1 = compare_dfs(old_one, df3, on=['station_id', 'time'])
-
-                        up1 = pd.concat([res1['diff'], res1['new']])['time']
-
-                        all_ones = df3.copy()
-                        old_times = all_ones.loc[~all_ones.time.isin(up1), 'time']
-                        if not old_times.empty:
-                            all_ones.loc[old_times, 'modified_date'] = old_mod_dates.loc[old_times, 'modified_date']
-
-                        all_ones[parameter] = pd.to_numeric(all_ones[parameter], errors='coerce')
+                            up1 = new1.copy()
 
                         ## Process data
-                        if not up1.empty:
-
-                            # df4_up = pd.merge(up1, stn2.drop(['geo'], axis=1), on='station_id')
-                            # df4_all = pd.merge(all_ones, stn2.drop(['geo'], axis=1), on='station_id')
-                            all_ones['height'] = 0
-                            all_ones.set_index(['time', 'height'], inplace=True)
-
-                            if qual_col in all_ones.columns:
-                                # df4_up[qual_col] = pd.to_numeric(df4_up[qual_col], errors='coerce', downcast='integer')
-                                all_ones[qual_col] = pd.to_numeric(all_ones[qual_col], errors='coerce', downcast='integer')
-                                ancillary_variables = [qual_col, 'modified_date']
-                            else:
-                                ancillary_variables = ['modified_date']
-
-                            # p_up1 = df_to_xarray(df4_up, nc_type, parameter, attrs1, encoding1, run_date_key, ancillary_variables, True)
-                            p_all1 = data_to_xarray(all_ones, stn, parameter, attrs1, encoding1, run_date=run_date_key, ancillary_variables=ancillary_variables, compression=True)
+                        if isinstance(up1, xr.Dataset):
 
                             ## Save updated data
-                            # print('Save updated data')
-                            # key_dict.update({'date': run_date_key})
-                            # skp4 = base_key_pattern.format(**key_dict)
+                            print('Save updated data')
+                            key_dict.update({'run_date': run_date_key})
+                            new_key = results_key_pattern.format(**key_dict)
 
-                            # s3.put_object(Body=p_up1, Bucket=param['remote']['bucket'], Key=skp4, ContentType='application/zstd', Metadata={'run_date': run_date_key})
+                            cctx = zstd.ZstdCompressor(level=1)
+                            c_obj = cctx.compress(up1.to_netcdf())
 
                             ## Save last complete data
                             print('Save last complete data')
 
-                            s3.put_object(Body=p_all1, Bucket=param['remote']['bucket'], Key=last_key, ContentType='application/zstd', Metadata={'run_date': run_date_key})
+                            s3.put_object(Body=c_obj, Bucket=param['remote']['bucket'], Key=new_key, ContentType='application/zstd', Metadata={'run_date': run_date_key})
 
                             ## Process stn data
                             print('Save station data')
-                            stn_m = process_real_station(ds['dataset_id'], [float(stn['lon']), float(stn['lat'])], all_ones.droplevel('height').reset_index(), parameter, precision, s3, param['remote']['bucket'], last_key, ref=stn['ref'], altitude=stn['altitude'])
+
+                            stn_m = process_real_station(ds['dataset_id'], [float(stn['lon']), float(stn['lat'])], up1.squeeze('height')[parameter].drop('height').to_dataframe().reset_index(), parameter, precision, s3, param['remote']['bucket'], ref=stn['ref'], altitude=stn['altitude'], mod_date=run_date)
 
                             stn4 = orjson.loads(stn_m.json(exclude_none=True))
                             up_stns = put_remote_station(s3, param['remote']['bucket'], stn4, run_date=run_date)

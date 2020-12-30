@@ -72,7 +72,7 @@ class Station(BaseModel):
     geometry: Geometry
     altitude: float
     stats: Stats
-    time_series_object_key: List[S3ObjectKey]
+    results_object_key: List[S3ObjectKey]
     properties: Dict = Field(None, description='Any additional station specific properties.')
     modified_date: datetime = Field(..., description='The modification date of the last edit.')
 

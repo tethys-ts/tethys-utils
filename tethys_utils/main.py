@@ -121,7 +121,7 @@ def list_parse_s3(s3_client, bucket, prefix, start_after='', delimiter='', conti
     if js:
         f_df1 = pd.DataFrame(js)[['Key', 'LastModified', 'ETag', 'Size']].copy()
         try:
-            f_df1['KeyDate'] = pd.to_datetime(f_df1.Key.str.findall('\d\d\d\d\d\d\d\dT\d\d\d\d\d\dZ').apply(lambda x: x[0]), utc=True, errors='coerce')
+            f_df1['KeyDate'] = pd.to_datetime(f_df1.Key.str.findall('\d\d\d\d\d\d\d\dT\d\d\d\d\d\dZ').apply(lambda x: x[0] if len(x) > 0 else np.nan), utc=True, errors='coerce')
         except:
             # print('No dates to parse in Keys')
             f_df1['KeyDate'] = None
@@ -280,7 +280,7 @@ def put_s3_object(s3, bucket, obj, dataset_id, station_id, run_date=None, conten
     return ts_key
 
 
-def results_integrety_checks(data, param_name, attrs, encoding, ancillary_variables=None):
+def results_data_integrety_checks(data, param_name, attrs, encoding, ancillary_variables=None):
     """
 
     """
@@ -377,7 +377,7 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
     ## Integrity Checks
 
     # Time series data
-    ts_data1 = results_data_integrety_checks(results_data, param_name, ts_attrs, ts_encoding, ancillary_variables)
+    ts_data1 = results_data_integrety_checks(results_data, param_name, results_attrs, results_encoding, ancillary_variables)
 
     # Station data
     station_data1 = station_data_integrety_checks(station_data)
@@ -542,10 +542,10 @@ def grp_ts_agg(df, grp_col, ts_col, freq_code, agg_fun, discrete=False, **kwargs
         raise TypeError('The object must be a DataFrame')
 
 
-def compare_dfs(old_df, new_df, on):
+def compare_dfs(old_df, new_df, on, parameter):
     """
     Function to compare two DataFrames with nans and return a dict with rows that have changed (diff), rows that exist in new_df but not in old_df (new), and rows  that exist in old_df but not in new_df (remove).
-    Both DataFrame must have the same columns.
+    Both DataFrame must have the same columns. If both DataFrames are identical, and empty DataFrame will be returned.
 
     Parameters
     ----------
@@ -555,57 +555,112 @@ def compare_dfs(old_df, new_df, on):
         The new DataFrame.
     on : str or list of str
         The primary key(s) to index/merge the two DataFrames.
+    parameter : str
+        The parameter/column that should be compared.
 
     Returns
     -------
-    dict of DataFrames
-        As described above, keys of 'diff', 'new', and 'remove'.
+    DataFrame
+        of the new dataset
     """
     if ~np.in1d(old_df.columns, new_df.columns).any():
         raise ValueError('Both DataFrames must have the same columns')
 
-    val_cols = [c for c in old_df.columns if not c in on]
-    all_cols = old_df.columns.tolist()
+    # val_cols = [c for c in old_df.columns if not c in on]
+    all_cols = new_df.columns.tolist()
 
     comp1 = pd.merge(old_df, new_df, on=on, how='outer', indicator=True, suffixes=('_x', ''))
 
-    rem1 = comp1.loc[comp1._merge == 'left_only', on].copy()
-    add1 = comp1.loc[comp1._merge == 'right_only', all_cols].copy()
+    # rem1 = comp1.loc[comp1._merge == 'left_only', on].copy()
+    add_set = comp1.loc[comp1._merge == 'right_only', all_cols].copy()
     comp2 = comp1[comp1._merge == 'both'].drop('_merge', axis=1).copy()
-#    comp2[comp2.isnull()] = np.nan
 
-    old_cols = on.copy()
+    old_cols = list(on)
     old_cols_map = {c: c[:-2] for c in comp2 if '_x' in c}
     old_cols.extend(old_cols_map.keys())
     old_set = comp2[old_cols].copy()
     old_set.rename(columns=old_cols_map, inplace=True)
     new_set = comp2[all_cols].copy()
 
-    comp_list = []
-    for c in val_cols:
-        isnull1 = new_set[c].isnull()
-        if isnull1.any():
-            new_set.loc[new_set[c].isnull(), c] = np.nan
-        if old_set[c].dtype.type in (np.float32, np.float64):
-            c1 = ~np.isclose(old_set[c], new_set[c], equal_nan=True)
-        elif old_set[c].dtype.name == 'object':
-            new_set[c] = new_set[c].astype(str)
-            c1 = old_set[c].astype(str) != new_set[c]
-        elif old_set[c].dtype.name == 'geometry':
-            old1 = old_set[c].apply(lambda x: hash(x.wkt))
-            new1 = new_set[c].apply(lambda x: hash(x.wkt))
-            c1 = old1 != new1
-        else:
-            c1 = old_set[c] != new_set[c]
-        notnan1 = old_set[c].notnull() | new_set[c].notnull()
-        c2 = c1 & notnan1
-        comp_list.append(c2)
-    comp_index = pd.concat(comp_list, axis=1).any(1)
-    diff_set = new_set[comp_index].copy()
+    isnull1 = new_set[parameter].isnull()
+    if isnull1.any():
+        new_set.loc[new_set[parameter].isnull(), parameter] = np.nan
+    if old_set[parameter].dtype.type in (np.float32, np.float64):
+        c1 = ~np.isclose(old_set[parameter], new_set[parameter], equal_nan=True)
+    elif old_set[parameter].dtype.name == 'object':
+        new_set[parameter] = new_set[parameter].astype(str)
+        c1 = old_set[parameter].astype(str) != new_set[parameter]
+    elif old_set[parameter].dtype.name == 'geometry':
+        old1 = old_set[parameter].apply(lambda x: hash(x.wkt))
+        new1 = new_set[parameter].apply(lambda x: hash(x.wkt))
+        c1 = old1 != new1
+    else:
+        c1 = old_set[parameter] != new_set[parameter]
+    notnan1 = old_set[parameter].notnull() | new_set[parameter].notnull()
+    c2 = c1 & notnan1
 
-    dict1 = {'diff': diff_set, 'new': add1, 'remove': rem1}
+    if (len(comp1) == len(comp2)) and (~c2).all():
+        all_set = pd.DataFrame()
+    else:
+        diff_set = new_set[c2].copy()
+        old_set2 = old_set[~c2].copy()
 
-    return dict1
+        all_set = pd.concat([old_set2, diff_set, add_set])
+
+    return all_set
+
+
+def compare_xrs(old_xr, new_xr):
+    """
+
+    """
+    ## Determine the parameter to be compared and the dimensions
+    vars1 = list(new_xr.variables)
+    parameter = [v for v in vars1 if 'dataset_id' in new_xr[v].attrs][0]
+    vars2 = [parameter]
+
+    if not parameter in old_xr:
+        raise ValueError(parameter + ' must be in old_xr')
+
+    on = new_xr[parameter].dims
+
+    if not on == old_xr[parameter].dims:
+        raise ValueError('Dimensions are not the same between the datasets')
+
+    ## Determine if there are ancillary variables to pull through
+    new_attrs = new_xr[parameter].attrs.copy()
+
+    if 'ancillary_variables' in new_attrs:
+        av1 = new_attrs['ancillary_variables'].split(' ')
+        vars2.extend(av1)
+
+    ## Pull out data for comparison
+    old_df = old_xr[vars2].to_dataframe().reset_index()
+    new_df = new_xr[vars2].to_dataframe().reset_index()
+
+    # old_df['modified_date'] = pd.Timestamp('2020-12-29')
+
+    ## run comparison
+    comp = compare_dfs(old_df, new_df, on, parameter)
+
+    if comp.empty:
+        return comp
+
+    else:
+
+        ## Repackage into netcdf
+        comp2 = comp.set_index(list(on)).sort_index().to_xarray()
+
+        for v in vars1:
+            if v in comp2:
+                comp2[v].attrs = new_xr[v].attrs.copy()
+                comp2[v].encoding = new_xr[v].encoding.copy()
+            else:
+                comp2[v] = new_xr[v].copy()
+
+        comp2.attrs = new_xr.attrs.copy()
+
+        return comp2
 
 
 def discrete_resample(df, freq_code, agg_fun, remove_inter=False, **kwargs):
@@ -858,29 +913,34 @@ def ht_stats(df, parameter, precision):
     return stats1
 
 
-def process_object_key(s3, bucket, key):
+def process_object_keys(s3, bucket, prefix):
     """
 
     """
-    meta1 = s3.head_object(Bucket=bucket, Key=key)
+    keys1 = list_parse_s3(s3, bucket, prefix)
 
-    object_info1 = S3ObjectKey(key=key, bucket=bucket, content_length=meta1['ContentLength'], etag=meta1['ETag'].replace('"', ''), run_date=pd.Timestamp(meta1['Metadata']['run_date']), modified_date=meta1['LastModified'])
+    infos1 = [S3ObjectKey(key=row['Key'], bucket=bucket, content_length=row['Size'], etag=row['ETag'], run_date=row['KeyDate'], modified_date=row['LastModified']) for i, row in keys1.iterrows()]
 
-    return object_info1
+    return infos1
 
 
-def process_real_station(dataset_id, coords, df, parameter, precision, s3, bucket, key, geo_type='Point', ref=None, name=None, osm_id=None, altitude=None, properties=None):
+def process_real_station(dataset_id, coords, df, parameter, precision, s3, bucket, geo_type='Point', ref=None, name=None, osm_id=None, altitude=None, properties=None, mod_date=None):
     """
 
     """
+    if mod_date is None:
+        mod_date = pd.Timestamp.today(tz='utc').round('s').tz_localize(None)
+
     geo1 = create_geometry(coords, geo_type='Point')
     station_id = assign_station_id(geo1)
 
     stats1 = ht_stats(df, parameter, precision)
 
-    object_info1 = process_object_key(s3, bucket, key)
+    prefix = key_patterns['results'].split('{run_date}')[0].format(dataset_id=dataset_id, station_id=station_id)
 
-    station_m = Station(dataset_id=dataset_id, station_id=station_id, virtual_station=False, geometry=geo1, stats=stats1, time_series_object_key=object_info1, ref=ref, name=name, osm_id=osm_id, altitude=altitude, properties=properties)
+    object_infos1 = process_object_keys(s3, bucket, prefix)
+
+    station_m = Station(dataset_id=dataset_id, station_id=station_id, virtual_station=False, geometry=geo1, stats=stats1, results_object_key=object_infos1, ref=ref, name=name, osm_id=osm_id, altitude=altitude, properties=properties, modified_date=mod_date)
 
     return station_m
 
