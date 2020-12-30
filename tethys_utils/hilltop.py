@@ -230,7 +230,7 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
                 ## Compare to last run
                 print('Compare to last run')
 
-                up1 = compare_datasets_from_s3(s3, param['remote']['bucket'], ds['dataset_id'], stn_id, new1)
+                up1 = compare_datasets_from_s3(s3, param['remote']['bucket'], new1)
 
                 ## Process data
                 if isinstance(up1, xr.Dataset):
@@ -515,7 +515,7 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
                         ## Compare to last run
                         print('Compare to last run')
 
-                        up1 = compare_datasets_from_s3(s3, param['remote']['bucket'], ds['dataset_id'], stn_id, new1)
+                        up1 = compare_datasets_from_s3(s3, param['remote']['bucket'], new1)
 
                         ## Process data
                         if isinstance(up1, xr.Dataset):
