@@ -126,6 +126,7 @@ def list_parse_s3(s3_client, bucket, prefix, start_after='', delimiter='', conti
             # print('No dates to parse in Keys')
             f_df1['KeyDate'] = None
         f_df1['ETag'] = f_df1['ETag'].str.replace('"', '')
+        f_df1['LastModified'] = pd.to_datetime(f_df1['LastModified']).dt.tz_localize(None)
     else:
         f_df1 = pd.DataFrame(columns=['Key', 'LastModified', 'ETag', 'Size', 'KeyDate'])
 
@@ -905,8 +906,8 @@ def ht_stats(df, parameter, precision):
     """
     min1 = df[parameter].min().round(precision)
     max1 = df[parameter].max().round(precision)
-    from_date = df['time'].min().tz_localize('utc')
-    to_date = df['time'].max().tz_localize('utc')
+    from_date = df['time'].min()
+    to_date = df['time'].max()
     count = df['time'].count()
 
     stats1 = Stats(min=min1, max=max1, count=count, from_date=from_date, to_date=to_date)
