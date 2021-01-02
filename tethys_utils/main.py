@@ -121,7 +121,7 @@ def list_parse_s3(s3_client, bucket, prefix, start_after='', delimiter='', conti
     if js:
         f_df1 = pd.DataFrame(js)[['Key', 'LastModified', 'ETag', 'Size']].copy()
         try:
-            f_df1['KeyDate'] = pd.to_datetime(f_df1.Key.str.findall('\d\d\d\d\d\d\d\dT\d\d\d\d\d\dZ').apply(lambda x: x[0] if len(x) > 0 else np.nan), utc=True, errors='coerce')
+            f_df1['KeyDate'] = pd.to_datetime(f_df1.Key.str.findall('\d\d\d\d\d\d\d\dT\d\d\d\d\d\dZ').apply(lambda x: x[0] if len(x) > 0 else np.nan), utc=True, errors='coerce').dt.tz_localize(None)
         except:
             # print('No dates to parse in Keys')
             f_df1['KeyDate'] = None

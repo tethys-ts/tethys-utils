@@ -1,6 +1,6 @@
 {% set name = "tethys-utils" %}
-{% set version = "0.1.34" %}
-{% set sha256 = "4b5b076a4fed1f83e756b6af217379bc18eaf7969f3ba5431627b3c0661c7275" %}
+{% set version = "0.1.35" %}
+{% set sha256 = "aa8546cc100ccceb2aae31634d0a4946307bc2d342e878ca4e6b3fe7cfac5916" %}
 
 # sha256 is the prefered checksum -- you can get it for a file with:
 #  `openssl sha256 <file name>`.
