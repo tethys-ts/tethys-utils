@@ -904,8 +904,8 @@ def ht_stats(df, parameter, precision):
     """
 
     """
-    min1 = df[parameter].min().round(precision)
-    max1 = df[parameter].max().round(precision)
+    min1 = pd.Series(df[parameter].min()).round(precision)
+    max1 = pd.Series(df[parameter].max()).round(precision)
     from_date = df['time'].min()
     to_date = df['time'].max()
     count = df['time'].count()
