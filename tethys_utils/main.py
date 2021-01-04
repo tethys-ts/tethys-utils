@@ -904,7 +904,7 @@ def ht_stats(df, parameter, precision):
     """
 
     """
-    min1 = round(float((df[parameter].min()), precision)
+    min1 = round(float(df[parameter].min()), precision)
     max1 = round(float(df[parameter].max()), precision)
     from_date = df['time'].min()
     to_date = df['time'].max()
