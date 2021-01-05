@@ -13,12 +13,14 @@ import boto3
 import botocore
 import smtplib
 import ssl
+import requests
 from pandas.core.groupby import SeriesGroupBy, GroupBy
 import orjson
 from time import sleep
 import traceback
 from hashlib import blake2b
 from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats
+from tethys_utils.altitude_io import koordinates_raster_query
 from geojson import Point
 import urllib3
 from multiprocessing.pool import ThreadPool
@@ -1091,47 +1093,41 @@ def compare_datasets_from_s3(s3, bucket, new_data):
     return up1
 
 
+def get_altitude(stn_df, dataset_id, koordinates_key, tethys_url=None, missing_value=-9999):
+    """
 
-# def update_remote_stations(s3, bucket, dataset_id, station_list, run_date=None):
-#     """
-#
-#     """
-#     if run_date is None:
-#         run_date = pd.Timestamp.today(tz='utc')
-#         run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
-#     elif isinstance(run_date, pd.Timestamp):
-#         run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
-#     elif isinstance(run_date, str):
-#         run_date_key = run_date
-#     else:
-#         raise TypeError('run_date must be None, Timestamp, or a string representation of a timestamp')
-#
-#     rem_stn = get_remote_station(s3, bucket, dataset_id)
-#
-#     if rem_stn != station_list:
-#         print('stations are different, stations.json.zst will be updated')
-#         all_ids = set([i['station_id'] for i in rem_stn])
-#         all_ids.update(set([i['station_id'] for i in station_list]))
-#
-#         up_list = copy.deepcopy(rem_stn)
-#         up_list = []
-#
-#         for i in all_ids:
-#             rem1 = [n for n in rem_stn if n['station_id'] == i]
-#             new1 = [n for n in station_list if n['station_id'] == i]
-#
-#             if new1:
-#                 up_list.append(new1[0])
-#             else:
-#                 up_list.append(rem1[0])
-#
-#         stn_json1 = write_pkl_zstd(orjson.dumps(up_list))
-#         obj2 = s3.put_object(Bucket=bucket, Key=stn_key, Body=stn_json1, Metadata={'run_date': run_date_key}, ContentType='application/json')
-#     else:
-#         print('stations are the same, stations.json.zst will not be updated')
-#         up_list = rem_stn
-#
-#     return up_list
+    """
+    stn_df1 = stn_df[['station_id', 'lon', 'lat']].drop_duplicates(subset=['station_id']).copy()
+
+    if isinstance(tethys_url, str):
+        try:
+            dc = zstd.ZstdDecompressor()
+            old_stns_r = requests.post(tethys_url + 'get_stations', params={'dataset_id': dataset_id, 'compression': 'zstd'})
+            old_stns = orjson.loads(dc.decompress(old_stns_r.content))
+        except:
+            old_stns = []
+    else:
+        old_stns = []
+
+    alt1 = []
+    for i, row in stn_df1.iterrows():
+        # print(row['station_id'])
+        old_stn_alt = [s['altitude'] for s in old_stns if s['station_id'] == row['station_id']]
+
+        if old_stn_alt:
+            alt1.extend(old_stn_alt)
+        else:
+            try:
+                r1 = koordinates_raster_query('https://data.linz.govt.nz', koordinates_key, '51768', row.lon, row.lat)[0]['value']
+                alt1.extend([round(r1, 3)])
+            except:
+                print('No altitude found for ' + row['station_id'] + ', using: ' + str(missing_value))
+                alt1.extend([missing_value])
+
+    stn_df1['altitude'] = alt1
+
+    return stn_df1
+
 
 #########################################
 ### Testing

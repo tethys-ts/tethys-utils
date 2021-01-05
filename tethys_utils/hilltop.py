@@ -3,6 +3,7 @@
 """
 import os
 import io
+import requests
 import numpy as np
 import zstandard as zstd
 import pandas as pd
@@ -48,7 +49,7 @@ def convert_site_names(names, rem_m=True):
     return names2
 
 
-def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=None, measurement='Abstraction Volume'):
+def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=None, measurement='Abstraction Volume', tethys_url=None):
     """
 
     """
@@ -129,20 +130,8 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
 
         if station_mtype_corrections is not None:
             for i, f in station_mtype_corrections.items():
-                mtypes_df.loc[(mtypes_df.Site == i[0]) & (mtypes_df.Measurement == i[1]), 'From'] = f
-                mtypes_df.loc[(mtypes_df.Site == i[0]) & (mtypes_df.Measurement == i[1]), 'corrections'] = True
-
-        ## Update sites with altitude
-        alt1 = mtypes_df2.apply(lambda x: koordinates_raster_query('https://data.linz.govt.nz', param['source']['koordinates_key'], '51768', x.lon, x.lat), axis=1)
-        alt2 = []
-        for a in alt1:
-            try:
-                alt2.extend([round(a[0]['value'], 3)])
-            except:
-                print('No altitude found, using -9999')
-                alt2.extend([-9999])
-
-        mtypes_df2['altitude'] = alt2
+                mtypes_df.loc[(mtypes_df.ref == i[0]) & (mtypes_df.Measurement == i[1]), 'From'] = f
+                mtypes_df.loc[(mtypes_df.ref == i[0]) & (mtypes_df.Measurement == i[1]), 'corrections'] = True
 
         for feat, ds in datasets.items():
 
@@ -165,6 +154,13 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
             precision = int(np.abs(np.log10(encoding1[parameter]['scale_factor'])))
 
             base_key_dict = {'dataset_id': ds['dataset_id']}
+
+            ## Update sites with altitude
+            print('Update sites with altitude either from tethys or koordinates')
+
+            stn_alt = get_altitude(mtypes_df3, ds['dataset_id'], param['source']['koordinates_key'], tethys_url)
+
+            mtypes_df3 = pd.merge(mtypes_df3, stn_alt[['station_id', 'altitude']], on='station_id')
 
             ## Iterate through the sites/mtypes
             for i, row in mtypes_df3.iterrows():
@@ -283,7 +279,7 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
 
 
 
-def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
+def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None, tethys_url=None):
     """
 
     """
@@ -368,22 +364,9 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
             stns_dict = {d['dataset_id']: [] for d in dataset_list}
 
             ## Update sites with altitude
-            print('Update sites with altitude')
-            alt1 = []
-            for i, row in stns2.iterrows():
-                print(row['station_id'])
-                r1 = koordinates_raster_query('https://data.linz.govt.nz', param['source']['koordinates_key'], '51768', row.lon, row.lat)
-                alt1.extend(r1)
-
-            alt2 = []
-            for a in alt1:
-                try:
-                    alt2.extend([round(a['value'], 3)])
-                except:
-                    print('No altitude found, using -9999')
-                    alt2.extend([-9999])
-
-            stns2['altitude'] = alt2
+            print('Get Tethys stations if they exist else koordinates')
+            stn_alt = get_altitude(stns2, datasets[meas][0]['dataset_id'], param['source']['koordinates_key'], tethys_url)
+            stns2 = pd.merge(stns2, stn_alt[['station_id', 'altitude']], on='station_id')
 
             if not mtypes_df.empty:
 
