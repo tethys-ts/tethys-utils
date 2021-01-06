@@ -89,7 +89,26 @@ def s3_connection(conn_config, max_pool_connections=20):
 
 def list_parse_s3(s3_client, bucket, prefix, start_after='', delimiter='', continuation_token=''):
     """
+    Wrapper S3 function around the list_objects_v2 base function with a Pandas DataFrame output.
 
+    Parameters
+    ----------
+    s3_client : boto3.client
+        A boto3 client object
+    bucket : str
+        The S3 bucket.
+    prefix : str
+        Limits the response to keys that begin with the specified prefix.
+    start_after : str
+        The S3 key to start after.
+    delimiter : str
+        A delimiter is a character you use to group keys.
+    continuation_token : str
+        ContinuationToken indicates to S3 that the list is being continued on this bucket with a token.
+
+    Returns
+    -------
+    DataFrame
     """
     if s3_client._endpoint.host == 'https://vault.revera.co.nz':
         js = []
