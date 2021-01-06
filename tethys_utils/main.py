@@ -1093,40 +1093,7 @@ def compare_datasets_from_s3(s3, bucket, new_data):
     return up1
 
 
-def get_altitude(stn_df, dataset_id, koordinates_key, tethys_url=None, missing_value=-9999):
-    """
 
-    """
-    stn_df1 = stn_df[['station_id', 'lon', 'lat']].drop_duplicates(subset=['station_id']).copy()
-
-    if isinstance(tethys_url, str):
-        try:
-            dc = zstd.ZstdDecompressor()
-            old_stns_r = requests.post(tethys_url + 'get_stations', params={'dataset_id': dataset_id, 'compression': 'zstd'})
-            old_stns = orjson.loads(dc.decompress(old_stns_r.content))
-        except:
-            old_stns = []
-    else:
-        old_stns = []
-
-    alt1 = []
-    for i, row in stn_df1.iterrows():
-        # print(row['station_id'])
-        old_stn_alt = [s['altitude'] for s in old_stns if s['station_id'] == row['station_id']]
-
-        if old_stn_alt:
-            alt1.extend(old_stn_alt)
-        else:
-            try:
-                r1 = koordinates_raster_query('https://data.linz.govt.nz', koordinates_key, '51768', row.lon, row.lat)[0]['value']
-                alt1.extend([round(r1, 3)])
-            except:
-                print('No altitude found for ' + row['station_id'] + ', using: ' + str(missing_value))
-                alt1.extend([missing_value])
-
-    stn_df1['altitude'] = alt1
-
-    return stn_df1
 
 
 #########################################
