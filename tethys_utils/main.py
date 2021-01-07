@@ -564,7 +564,7 @@ def grp_ts_agg(df, grp_col, ts_col, freq_code, agg_fun, discrete=False, **kwargs
         raise TypeError('The object must be a DataFrame')
 
 
-def compare_dfs(old_df, new_df, on, parameter):
+def compare_dfs(old_df, new_df, on, parameter, add_old=False):
     """
     Function to compare two DataFrames with nans and return a dict with rows that have changed (diff), rows that exist in new_df but not in old_df (new), and rows  that exist in old_df but not in new_df (remove).
     Both DataFrame must have the same columns. If both DataFrames are identical, and empty DataFrame will be returned.
@@ -593,7 +593,6 @@ def compare_dfs(old_df, new_df, on, parameter):
 
     comp1 = pd.merge(old_df, new_df, on=on, how='outer', indicator=True, suffixes=('_x', ''))
 
-    # rem1 = comp1.loc[comp1._merge == 'left_only', on].copy()
     add_set = comp1.loc[comp1._merge == 'right_only', all_cols].copy()
     comp2 = comp1[comp1._merge == 'both'].drop('_merge', axis=1).copy()
 
@@ -627,12 +626,20 @@ def compare_dfs(old_df, new_df, on, parameter):
         diff_set = new_set[c2].copy()
         old_set2 = old_set[~c2].copy()
 
-        all_set = pd.concat([old_set2, diff_set, add_set])
+        if add_old:
+            not_cols = list(on)
+            [not_cols.extend([c]) for c in comp1.columns if '_x' in c]
+            add_old1 = comp1.loc[comp1._merge == 'left_only', not_cols].copy()
+            add_old1.rename(columns=old_cols_map, inplace=True)
+
+            all_set = pd.concat([old_set2, diff_set, add_set, add_old1])
+        else:
+            all_set = pd.concat([old_set2, diff_set, add_set])
 
     return all_set
 
 
-def compare_xrs(old_xr, new_xr):
+def compare_xrs(old_xr, new_xr, add_old=False):
     """
 
     """
@@ -663,7 +670,7 @@ def compare_xrs(old_xr, new_xr):
     # old_df['modified_date'] = pd.Timestamp('2020-12-29')
 
     ## run comparison
-    comp = compare_dfs(old_df, new_df, on, parameter)
+    comp = compare_dfs(old_df, new_df, on, parameter, add_old=add_old)
 
     if comp.empty:
         print('Nothing has changed. Returning empty DataFrame.')
@@ -1079,7 +1086,7 @@ def put_remote_agg_datasets(s3, bucket, threads=20):
     return output
 
 
-def compare_datasets_from_s3(s3, bucket, new_data):
+def compare_datasets_from_s3(s3, bucket, new_data, add_old=add_old):
     """
 
     """
@@ -1104,7 +1111,7 @@ def compare_datasets_from_s3(s3, bucket, new_data):
         xr_old_one = xr.open_dataset(p_old_one)
         xr_old_one['time'] = xr_old_one['time'].dt.round('s')
 
-        up1 = compare_xrs(xr_old_one, new_data)
+        up1 = compare_xrs(xr_old_one, new_data, add_old=add_old)
     else:
         print('No prior data found in S3. All data will be returned.')
         up1 = new_data.copy()
