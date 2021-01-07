@@ -159,7 +159,7 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
             ## Update sites with altitude
             print('Update sites with altitude either from tethys or koordinates')
 
-            stn_alt = get_altitude(mtypes_df3, ds['dataset_id'], param['source']['koordinates_key'], tethys_url)
+            stn_alt = get_altitude(mtypes_df3, ds['dataset_id'], param['source']['koordinates_key'], param['remote'])
 
             mtypes_df3 = pd.merge(mtypes_df3, stn_alt[['station_id', 'altitude']], on='station_id')
 
@@ -366,7 +366,7 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None, teth
 
             ## Update sites with altitude
             print('Get Tethys stations if they exist else koordinates')
-            stn_alt = get_altitude(stns2, datasets[meas][0]['dataset_id'], param['source']['koordinates_key'], tethys_url)
+            stn_alt = get_altitude(stns2, datasets[meas][0]['dataset_id'], param['source']['koordinates_key'], param['remote'])
             stns2 = pd.merge(stns2, stn_alt[['station_id', 'altitude']], on='station_id')
 
             if not mtypes_df.empty:
