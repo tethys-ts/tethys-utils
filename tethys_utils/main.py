@@ -1086,7 +1086,7 @@ def put_remote_agg_datasets(s3, bucket, threads=20):
     return output
 
 
-def compare_datasets_from_s3(s3, bucket, new_data, add_old=add_old):
+def compare_datasets_from_s3(s3, bucket, new_data, add_old=False):
     """
 
     """
