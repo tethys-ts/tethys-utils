@@ -5,6 +5,7 @@ Functions to query APIs for altitude data.
 import requests
 import orjson
 import zstandard as zstd
+from tethysts import Tethys
 
 ######################################
 #### Parameters
@@ -39,17 +40,16 @@ def koordinates_raster_query(base_url: str, key: str, layer_id: (int, str), lon:
         return resp.content.decode()
 
 
-def get_altitude(stn_df, dataset_id, koordinates_key, tethys_url=None, missing_value=-9999):
+def get_altitude(stn_df, dataset_id, koordinates_key, tethys_remote=None, missing_value=-9999):
     """
 
     """
     stn_df1 = stn_df[['station_id', 'lon', 'lat']].drop_duplicates(subset=['station_id']).copy()
 
-    if isinstance(tethys_url, str):
+    if isinstance(tethys_remote, dict):
         try:
-            dc = zstd.ZstdDecompressor()
-            old_stns_r = requests.post(tethys_url + 'get_stations', params={'dataset_id': dataset_id, 'compression': 'zstd'})
-            old_stns = orjson.loads(dc.decompress(old_stns_r.content))
+            t1 = Tethys([tethys_remote])
+            old_stns = t1.get_stations(dataset_id)
         except:
             old_stns = []
     else:
