@@ -13,9 +13,10 @@ import orjson
 from time import sleep
 import traceback
 # from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats
-from tethys_utils.main import nc_ts_key_pattern, key_patterns, assign_ds_ids, put_remote_dataset, create_geometry, assign_station_id, grp_ts_agg, read_pkl_zstd, data_to_xarray, process_real_station, put_remote_station, email_msg, s3_connection, agg_stat_mapping, put_remote_agg_datasets, put_remote_agg_stations, list_parse_s3, get_remote_station, compare_datasets_from_s3
+from tethys_utils.main import nc_ts_key_pattern, assign_ds_ids, put_remote_dataset, create_geometry, assign_station_id, grp_ts_agg, read_pkl_zstd, data_to_xarray, process_real_station, put_remote_station, email_msg, s3_connection, agg_stat_mapping, put_remote_agg_datasets, put_remote_agg_stations, list_parse_s3, get_remote_station, compare_datasets_from_s3
 from tethys_utils.altitude_io import koordinates_raster_query, get_altitude
 import urllib3
+from tethysts.utils import key_patterns
 
 
 ##########################################################

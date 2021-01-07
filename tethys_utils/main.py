@@ -20,10 +20,10 @@ from time import sleep
 import traceback
 from hashlib import blake2b
 from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats
-from tethys_utils.altitude_io import koordinates_raster_query
 from geojson import Point
 import urllib3
 from multiprocessing.pool import ThreadPool
+from tethysts.utils import key_patterns
 
 ####################################################
 ### Misc reference objects
@@ -35,13 +35,6 @@ nc_ts_key_pattern = {
                     'H23': 'tethys/diff/{dataset_id}/{date}/{station_id}.H23.nc.zst',
                     'H25': 'tethys/diff/{dataset_id}/{date}.H25.nc.zst'
                     }
-
-key_patterns = {'results': 'tethys/v2/{dataset_id}/{station_id}/{run_date}/results.nc.zst',
-                'datasets': 'tethys/v2/datasets.json.zst',
-                'stations': 'tethys/v2/{dataset_id}/stations.json.zst',
-                'station': 'tethys/v2/{dataset_id}/{station_id}/station.json.zst',
-                'dataset': 'tethys/v2/{dataset_id}/dataset.json.zst',
-                }
 
 base_ds_fields = ['feature', 'parameter', 'method', 'product_code', 'owner', 'aggregation_statistic', 'frequency_interval', 'utc_offset']
 
