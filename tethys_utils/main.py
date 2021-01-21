@@ -757,9 +757,14 @@ def email_msg(sender_address, sender_password, receiver_address, subject, body):
     smtp_server = "smtp.gmail.com"
 
     msg_base = """Subject: {subject}\n
-    {body}"""
+    {body}
 
-    msg = msg_base.format(subject=subject, body=body)
+    hostname: {host}
+    IP address: {ip}"""
+
+    ip = requests.get('https://api.ipify.org').text
+
+    msg = msg_base.format(subject=subject, body=body, host=socket.getfqdn(), ip=ip)
 
     # Create a secure SSL context
     context = ssl.create_default_context()
