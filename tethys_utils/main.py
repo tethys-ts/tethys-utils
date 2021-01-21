@@ -1,6 +1,7 @@
 """
 
 """
+import socket
 import os
 import io
 import numpy as np
