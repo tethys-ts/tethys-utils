@@ -10,7 +10,7 @@ here = os.path.abspath(os.path.dirname(__file__))
 name = 'tethys-utils'
 main_package = 'tethys_utils'
 datasets = 'datasets/time_series'
-version = '0.1.52'
+version = '0.1.53'
 descrip = 'tethys utilities'
 
 # The below code is for readthedocs. To have sphinx/readthedocs interact with

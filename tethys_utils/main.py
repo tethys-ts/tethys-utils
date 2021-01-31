@@ -1103,19 +1103,24 @@ def put_remote_agg_datasets(s3, bucket, threads=20):
     return output
 
 
-def compare_datasets_from_s3(s3, bucket, new_data, add_old=False):
+def compare_datasets_from_s3(s3, bucket, new_data, add_old=False, read_buffer=False):
     """
 
     """
     ## Determine the parameter, station_id, and dataset_id
     vars1 = list(new_data.variables)
-    dataset_id = [new_data[v].attrs['dataset_id'] for v in vars1 if 'dataset_id' in new_data[v].attrs][0]
+    dataset = [new_data[v].attrs for v in vars1 if 'dataset_id' in new_data[v].attrs][0]
+    dataset_id = dataset['dataset_id']
+    # result_type = dataset['result_type']
     station_id = str(new_data['station_id'].values)
 
     key_dict = {'dataset_id': dataset_id, 'station_id': station_id}
 
     ## Get list of keys
-    prefix_key = key_patterns['results'].split('{run_date}')[0].format(**key_dict)
+    if read_buffer:
+        prefix_key = key_patterns['results_buffer'].split('{run_date}')[0].format(**key_dict)
+    else:
+        prefix_key = key_patterns['results'].split('{run_date}')[0].format(**key_dict)
     all_keys = list_parse_s3(s3, bucket, prefix_key)
     last_key1 = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()]
 
