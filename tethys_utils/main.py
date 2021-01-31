@@ -25,6 +25,8 @@ from geojson import Point
 import urllib3
 from multiprocessing.pool import ThreadPool
 from tethysts.utils import key_patterns
+from email.message import EmailMessage
+
 
 ####################################################
 ### Misc reference objects
@@ -732,7 +734,7 @@ def discrete_resample(df, freq_code, agg_fun, remove_inter=False, **kwargs):
     return s6
 
 
-def email_msg(sender_address, sender_password, receiver_address, subject, body):
+def email_msg(sender_address, sender_password, receiver_address, subject, body, smtp_server="smtp.gmail.com"):
     """
     Function to send a simple email using gmail smtp.
 
@@ -748,6 +750,8 @@ def email_msg(sender_address, sender_password, receiver_address, subject, body):
         The subject of the email.
     body : str
         The main body of the email.
+    smtp_server : str
+        The SMTP server to send the email through.
 
     Returns
     -------
@@ -755,24 +759,38 @@ def email_msg(sender_address, sender_password, receiver_address, subject, body):
 
     """
     port = 465  # For SSL
-    smtp_server = "smtp.gmail.com"
 
-    msg_base = """Subject: {subject}\n
-    {body}
+    msg = EmailMessage()
+
+    # msg_base = """From: {from1}\n
+    # To: {to}\n
+    # Subject: {subject}\n
+
+    # {body}
+
+    # hostname: {host}
+    # IP address: {ip}"""
+
+    ip = requests.get('https://api.ipify.org').text
+
+    body_base = """{body}
 
     hostname: {host}
     IP address: {ip}"""
 
-    ip = requests.get('https://api.ipify.org').text
+    # msg = msg_base.format(subject=subject, body=body, host=socket.getfqdn(), ip=ip, from1=sender_address, to=receiver_address)
 
-    msg = msg_base.format(subject=subject, body=body, host=socket.getfqdn(), ip=ip)
+    msg['From'] = sender_address
+    msg['To'] = receiver_address
+    msg['Subject'] = subject
+    msg.set_content(body_base.format(body=body, host=socket.getfqdn(), ip=ip))
 
     # Create a secure SSL context
     context = ssl.create_default_context()
 
     with smtplib.SMTP_SSL(smtp_server, port, context=context) as server:
         server.login(sender_address, sender_password)
-        server.sendmail(sender_address, receiver_address, msg)
+        server.send_message(msg)
 
 
 def tsreg(ts, freq=None, interp=False):
