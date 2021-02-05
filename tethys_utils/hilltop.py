@@ -175,9 +175,9 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
                     try:
                         sleep(1)
                         if row['corrections']:
-                            ts_data = ws.get_data(base_url, hts, row.Site, row.Measurement, from_date=str(row.From), to_date=str(row.To), agg_method='Total', agg_interval='1 day')[1:].reset_index()
+                            ts_data0 = ws.get_data(base_url, hts, row.Site, row.Measurement, from_date=str(row.From), to_date=str(row.To))
                         else:
-                            ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, agg_method='Total', agg_interval='1 day')[1:].reset_index()
+                            ts_data0 = ws.get_data(base_url, hts, row.ref, row.Measurement)
                         break
                     except requests.exceptions.ConnectionError as err:
                         print(row.ref + ' and ' + row.Measurement + ' error: ' + str(err))
@@ -200,16 +200,18 @@ def get_hilltop_water_use_data(param, ts_local_tz, station_mtype_corrections=Non
 
                 ## Pre-Process data
                 print('Pre-Process data')
+                ts_data_all2 = ts_data0.reset_index()[['DateTime', 'Value']].set_index('DateTime')['Value']
+                ts_data = ts_data_all2.resample('D', closed='right').sum().reset_index()
+
                 stn = mtypes_df3.loc[mtypes_df3.ref == row.ref, ['ref', 'lat', 'lon', 'altitude', 'station_id']].iloc[0].to_dict()
 
                 stn_id = stn['station_id']
-                ref = stn['ref']
 
                 mod_date = pd.Timestamp.today(tz='utc').round('s').tz_localize(None)
 
                 ts_data['DateTime'] = ts_data['DateTime'] - pd.DateOffset(days=1)
 
-                ts_data1 = ts_data.drop(['Site', 'Measurement'], axis=1).rename(columns={ 'Value': parameter, 'DateTime': 'time'}).copy()
+                ts_data1 = ts_data.rename(columns={'Value': parameter, 'DateTime': 'time'}).copy()
 
                 ts_data1[parameter] = pd.to_numeric(ts_data1[parameter], errors='coerce')
                 ts_data1['time'] = ts_data1['time'].dt.tz_localize(ts_local_tz).dt.tz_convert('utc').dt.tz_localize(None)
