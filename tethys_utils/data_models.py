@@ -8,7 +8,6 @@ from datetime import datetime, date
 from typing import List, Optional, Dict, Union
 from pydantic import BaseModel, Field
 # from hashlib import blake2b
-import orjson
 
 
 #########################################
@@ -21,7 +20,6 @@ class Stats(BaseModel):
     """
     min: float
     max: float
-    count: int
     from_date: datetime
     to_date: datetime
 

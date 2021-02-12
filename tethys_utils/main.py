@@ -24,7 +24,7 @@ from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey
 from geojson import Point
 import urllib3
 from multiprocessing.pool import ThreadPool
-from tethysts.utils import key_patterns
+from tethysts.utils import key_patterns, get_object_s3
 from email.message import EmailMessage
 
 
@@ -150,12 +150,12 @@ def list_parse_s3(s3_client, bucket, prefix, start_after='', delimiter='', conti
     return f_df1
 
 
-def get_last_date(s3_df, default_date='1900-01-01', date_type='date', local_tz=None):
+def get_last_date(s3_df, default_date='1900-01-01', date_type='date'):
     """
 
     """
     if not s3_df.empty:
-        last_run_date = s3_df['KeyDate'].max().tz_convert(local_tz).tz_localize(None)
+        last_run_date = s3_df['KeyDate'].max()
     else:
         last_run_date = pd.Timestamp(default_date)
 
@@ -945,17 +945,20 @@ def assign_station_id(geometry):
     return station_id
 
 
-def ht_stats(df, parameter, precision):
+def get_new_stats(data):
     """
 
     """
-    min1 = round(float(df[parameter].min()), precision)
-    max1 = round(float(df[parameter].max()), precision)
-    from_date = df['time'].min()
-    to_date = df['time'].max()
-    count = int(df['time'].count())
+    vars1 = list(data.variables)
+    parameter = [v for v in vars1 if 'dataset_id' in data[v].attrs][0]
+    precision = int(np.abs(np.log10(data[parameter].attrs['precision'])))
 
-    stats1 = Stats(min=min1, max=max1, count=count, from_date=from_date, to_date=to_date)
+    min1 = round(float(data[parameter].min()), precision)
+    max1 = round(float(data[parameter].max()), precision)
+    from_date = pd.Timestamp(data['time'].min().values)
+    to_date = pd.Timestamp(data['time'].max().values)
+
+    stats1 = Stats(min=min1, max=max1, from_date=from_date, to_date=to_date)
 
     return stats1
 
@@ -965,30 +968,50 @@ def process_object_keys(s3, bucket, prefix):
 
     """
     keys1 = list_parse_s3(s3, bucket, prefix)
-    keys2 = keys1[keys1.Key.str.contains('results.nc.zst')]
+    keys2 = keys1[keys1.Key.str.contains('results')]
 
     infos1 = [S3ObjectKey(key=row['Key'], bucket=bucket, content_length=row['Size'], etag=row['ETag'], run_date=row['KeyDate'], modified_date=row['LastModified']) for i, row in keys2.iterrows()]
 
     return infos1
 
 
-def process_real_station(dataset_id, coords, df, parameter, precision, s3, bucket, geo_type='Point', ref=None, name=None, osm_id=None, altitude=None, properties=None, mod_date=None):
+def process_real_station(dataset_id, coords, data, connection_config, bucket, geo_type='Point', ref=None, name=None, osm_id=None, altitude=None, properties=None, mod_date=None):
     """
 
     """
     if mod_date is None:
         mod_date = pd.Timestamp.today(tz='utc').round('s').tz_localize(None)
 
+    ## Genreate the info for the recently created data
     geo1 = create_geometry(coords, geo_type='Point')
     station_id = assign_station_id(geo1)
 
-    stats1 = ht_stats(df, parameter, precision)
+    stats1 = get_new_stats(data)
 
+    s3 = s3_connection(connection_config)
     prefix = key_patterns['results'].split('{run_date}')[0].format(dataset_id=dataset_id, station_id=station_id)
 
     object_infos1 = process_object_keys(s3, bucket, prefix)
 
-    station_m = Station(dataset_id=dataset_id, station_id=station_id, virtual_station=False, geometry=geo1, stats=stats1, results_object_key=object_infos1, ref=ref, name=name, osm_id=osm_id, altitude=altitude, properties=properties, modified_date=mod_date)
+    ## Get old data
+    stn_key = key_patterns['station'].format(dataset_id=dataset_id, station_id=station_id)
+
+    old_stn_data_obj = get_object_s3(stn_key, connection_config, bucket)
+    old_stn_data = read_json_zstd(old_stn_data_obj)
+
+    if old_stn_data:
+        old_stats = old_stn_data['stats']
+        min1 = min([old_stats['min'], stats1.min])
+        max1 = max([old_stats['max'], stats1.max])
+        to_date = max([pd.Timestamp(old_stats['to_date']), stats1.to_date])
+        from_date = min([pd.Timestamp(old_stats['from_date']), stats1.from_date])
+
+        stats2 = Stats(min=min1, max=max1, from_date=from_date, to_date=to_date)
+    else:
+        stats2 = stats1
+
+    ## Put it all together
+    station_m = Station(dataset_id=dataset_id, station_id=station_id, virtual_station=False, geometry=geo1, stats=stats2, results_object_key=object_infos1, ref=ref, name=name, osm_id=osm_id, altitude=altitude, properties=properties, modified_date=mod_date)
 
     return station_m
 
@@ -1103,7 +1126,7 @@ def put_remote_agg_datasets(s3, bucket, threads=20):
     return output
 
 
-def compare_datasets_from_s3(s3, bucket, new_data, add_old=False, read_buffer=False):
+def compare_datasets_from_s3(s3, bucket, new_data, add_old=False, read_buffer=False, last_run_date_key=None):
     """
 
     """
@@ -1116,13 +1139,32 @@ def compare_datasets_from_s3(s3, bucket, new_data, add_old=False, read_buffer=Fa
 
     key_dict = {'dataset_id': dataset_id, 'station_id': station_id}
 
-    ## Get list of keys
     if read_buffer:
-        prefix_key = key_patterns['results_buffer'].split('{run_date}')[0].format(**key_dict)
+        base_key_pattern = key_patterns['results_buffer']
+    else:
+        base_key_pattern = key_patterns['results']
+
+    ## Get list of keys
+    if isinstance(last_run_date_key, str):
+        key_dict.update({'run_date': last_run_date_key})
+        last_key = base_key_pattern.format(**key_dict)
+        try:
+            last_info1 = s3.head_object(Bucket=bucket, Key=last_key)
+            last_key1 = pd.DataFrame({'Key': [last_key]})
+        except:
+            last_key1 = pd.DataFrame()
     else:
         prefix_key = key_patterns['results'].split('{run_date}')[0].format(**key_dict)
-    all_keys = list_parse_s3(s3, bucket, prefix_key)
-    last_key1 = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()]
+        all_keys = list_parse_s3(s3, bucket, prefix_key)
+        last_key1 = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()]
+
+    ## Get list of keys
+    # if read_buffer:
+    #     prefix_key = key_patterns['results_buffer'].split('{run_date}')[0].format(**key_dict)
+    # else:
+    #     prefix_key = key_patterns['results'].split('{run_date}')[0].format(**key_dict)
+    # all_keys = list_parse_s3(s3, bucket, prefix_key)
+    # last_key1 = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()]
 
     ## Get previous data and compare
     if not last_key1.empty:
@@ -1141,6 +1183,89 @@ def compare_datasets_from_s3(s3, bucket, new_data, add_old=False, read_buffer=Fa
     return up1
 
 
+
+def get_filtered_obj_list(remote, dataset_list):
+    """
+
+    """
+    base_prefix = key_patterns['results'].split('{dataset_id}')[0]
+    dataset_ids = [d['dataset_id'] for d in dataset_list]
+
+    s3 = s3_connection(remote['connection_config'])
+    obj_df = list_parse_s3(s3, remote['bucket'], base_prefix)
+
+    obj_df1 = obj_df[obj_df['KeyDate'].notnull()].copy()
+    obj_df1['dataset_id'] = obj_df1['Key'].apply(lambda x: x.split('/')[2])
+    obj_df1['station_id'] = obj_df1['Key'].apply(lambda x: x.split('/')[3])
+    obj_df1['result_type'] = 'results'
+    obj_df1.loc[obj_df1['Key'].str.contains('buffer'), 'result_type'] = 'buffer'
+
+    obj_df2 = obj_df1[obj_df1['dataset_id'].isin(dataset_ids)].copy()
+
+    return obj_df2
+
+
+def get_last_results(obj_df):
+    """
+
+    """
+    last_date1 = obj_df.groupby(['dataset_id', 'station_id'])['KeyDate'].last().reset_index()
+    obj_df1 = pd.merge(last_date1, obj_df[['Key', 'dataset_id', 'station_id', 'KeyDate', 'result_type']], on=['dataset_id', 'station_id', 'KeyDate'])
+
+    return obj_df1
+
+
+def filter_old_ones(obj_df, run_date, days_prior):
+    """
+
+    """
+    if isinstance(run_date.tzname(), str):
+        run_date1 = run_date.tz_convert('UTC').tz_localize(None)
+    else:
+        run_date1 = run_date
+
+    old_date = run_date1 - pd.DateOffset(days=days_prior)
+
+    obj_df1 = obj_df[obj_df['KeyDate'] < old_date].copy()
+
+    return obj_df1
+
+
+def process_buffer(row, remote, run_date_key):
+    """
+
+    """
+    data_list = []
+    for i, r in row.iterrows():
+        obj1 = get_object_s3(r['Key'], remote['connection_config'], remote['bucket'], 'zstd')
+        b1 = io.BytesIO(obj1)
+        xr1 = xr.open_dataset(b1)
+        data_list.append(xr1)
+
+    xr2 = xr.concat(data_list, dim='time', data_vars='minimal')
+    xr3 = xr2.sel(time=~xr2.get_index('time').duplicated('last'))
+    xr3.attrs.update({'history': run_date_key + ': Generated'})
+
+    key_dict = {'dataset_id': r['dataset_id'], 'station_id': r['station_id'], 'run_date': run_date_key}
+    new_key = key_patterns['results'].format(**key_dict)
+
+    cctx = zstd.ZstdCompressor(level=1)
+    c_obj = cctx.compress(xr3.to_netcdf())
+
+    s3 = s3_connection(remote['connection_config'])
+
+    s3.put_object(Body=c_obj, Bucket=remote['bucket'], Key=new_key, ContentType='application/zstd', Metadata={'run_date': run_date_key})
+
+
+def process_buffer_threaded(obj_df, remote, run_date_key, threads=30):
+    """
+
+    """
+    grp1 = obj_df.groupby(['dataset_id', 'station_id'])
+
+    input_list = [[row, remote, run_date_key] for i, row in grp1]
+
+    output = ThreadPool(threads).starmap(process_buffer, input_list)
 
 
 
