@@ -983,7 +983,7 @@ def process_real_station(dataset_id, coords, data, connection_config, bucket, ge
         mod_date = pd.Timestamp.today(tz='utc').round('s').tz_localize(None)
 
     ## Genreate the info for the recently created data
-    geo1 = create_geometry(coords, geo_type='Point')
+    geo1 = create_geometry(coords, geo_type=geo_type)
     station_id = assign_station_id(geo1)
 
     stats1 = get_new_stats(data)
@@ -996,8 +996,11 @@ def process_real_station(dataset_id, coords, data, connection_config, bucket, ge
     ## Get old data
     stn_key = key_patterns['station'].format(dataset_id=dataset_id, station_id=station_id)
 
-    old_stn_data_obj = get_object_s3(stn_key, connection_config, bucket)
-    old_stn_data = read_json_zstd(old_stn_data_obj)
+    try:
+        old_stn_data_obj = get_object_s3(stn_key, connection_config, bucket)
+        old_stn_data = read_json_zstd(old_stn_data_obj)
+    except:
+        old_stn_data = {}
 
     if old_stn_data:
         old_stats = old_stn_data['stats']
