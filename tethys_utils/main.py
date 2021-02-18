@@ -20,10 +20,11 @@ import orjson
 from time import sleep
 import traceback
 from hashlib import blake2b
-from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats
+from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats, StationBase
+# from data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats, StationBase
 from geojson import Point
 import urllib3
-from multiprocessing.pool import ThreadPool
+from multiprocessing.pool import ThreadPool, Pool
 from tethysts.utils import key_patterns, get_object_s3
 from email.message import EmailMessage
 
@@ -305,11 +306,12 @@ def results_data_integrety_checks(data, param_name, attrs, encoding, ancillary_v
     # Time series data
     data_cols = []
     if isinstance(ancillary_variables, list):
-        for av in ancillary_variables:
-            if not av in data:
-                raise ValueError('The DataFrame must contain every value in the ancillary_variables list')
-            else:
-                data_cols.extend([av])
+        if len(ancillary_variables) > 0:
+            for av in ancillary_variables:
+                if not av in data:
+                    raise ValueError('The DataFrame must contain every value in the ancillary_variables list')
+                else:
+                    data_cols.extend([av])
 
     data_cols.extend([param_name])
 
@@ -348,21 +350,21 @@ def results_data_integrety_checks(data, param_name, attrs, encoding, ancillary_v
     return data
 
 
-def station_data_integrety_checks(data, attrs=None, encoding=None):
-    """
+# def station_data_integrety_checks(data, attrs=None, encoding=None):
+#     """
 
-    """
-    # Station data
-    essentials = {'lat': (float, np.float), 'lon': (float, np.float), 'station_id': str, 'altitude': (int, float, np.float, np.int)}
+#     """
+#     # Station data
+#     essentials = {'lat': (float, np.float), 'lon': (float, np.float), 'station_id': str, 'altitude': (int, float, np.float, np.int)}
 
-    for c in essentials:
-        if not c in data.keys():
-            raise ValueError('The station_data DataFrame must contain the field: ' + str(c))
+#     for c in essentials:
+#         if not c in data.keys():
+#             raise ValueError('The station_data DataFrame must contain the field: ' + str(c))
 
-        if not isinstance(data[c], essentials[c]):
-            raise ValueError('The station_data DataFrame field must have the data type(s): ' + str(essentials[c]))
+#         if not isinstance(data[c], essentials[c]):
+#             raise ValueError('The station_data DataFrame field must have the data type(s): ' + str(essentials[c]))
 
-    return data
+#     return data
 
 
 def data_to_xarray(results_data, station_data, param_name, results_attrs, results_encoding, station_attrs=None, station_encoding=None, virtual_station=False, run_date=None, ancillary_variables=None, compression=False, compress_level=1):
@@ -398,7 +400,11 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
     ts_data1 = results_data_integrety_checks(results_data, param_name, results_attrs, results_encoding, ancillary_variables)
 
     # Station data
-    station_data1 = station_data_integrety_checks(station_data)
+    stn_m = StationBase(**station_data)
+    stn_data = orjson.loads(stn_m.json(exclude_none=True))
+    stn_data['lon'] = stn_data['geometry']['coordinates'][0]
+    stn_data['lat'] = stn_data['geometry']['coordinates'][1]
+    stn_data.pop('geometry')
 
     ## Assign Attributes
 
@@ -408,9 +414,9 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
         attrs1 = {}
 
     attrs1.update({'station_id': {'cf_role': "timeseries_id", 'virtual_station': virtual_station}, 'lat': {'standard_name': "latitude", 'units': "degrees_north"}, 'lon': {'standard_name': "longitude", 'units': "degrees_east"}, 'altitude': {'standard_name': 'surface_altitude', 'long_name': 'height above the geoid to the lower boundary of the atmosphere', 'units': 'm'}})
-    if 'name' in station_data.keys():
+    if 'name' in stn_data.keys():
         attrs1.update({'name': {'long_name': 'station name'}})
-    if 'ref' in station_data.keys():
+    if 'ref' in stn_data.keys():
         attrs1.update({'ref': {'long_name': 'station reference id given by the owner'}})
 
     ts_cols = list(results_data.columns)
@@ -423,7 +429,8 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
         attrs1.update({'modified_date': {'long_name': 'last modified date'}})
 
     if isinstance(ancillary_variables, list):
-        attrs1[param_name].update({'ancillary_variables': ' '.join(ancillary_variables)})
+        if len(ancillary_variables) > 0:
+            attrs1[param_name].update({'ancillary_variables': ' '.join(ancillary_variables)})
 
     ## Assign encodings
     if isinstance(station_encoding, dict):
@@ -451,7 +458,7 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
     ## Create the Xarray Dataset
 
     ds1 = results_data.to_xarray()
-    for k, v in station_data.items():
+    for k, v in stn_data.items():
         ds1[k] = v
 
     ## Add attributes and encodings
@@ -845,7 +852,7 @@ def assign_ds_ids(datasets):
     ### Iterate through the dataset list
     for ds in dss:
         # print(ds)
-        ### Validate model
+        ## Validate base model
         ds_m = DatasetBase(**ds)
 
         base_ds = {k: ds[k] for k in base_ds_fields}
@@ -854,7 +861,25 @@ def assign_ds_ids(datasets):
 
         ds['dataset_id'] = ds_id
 
+        ## Validate full model
+        ds_m = Dataset(**ds)
+
     return dss
+
+
+def process_datasets(datasets):
+    """
+
+    """
+    for ht_ds, ds_list in datasets.items():
+        ds_list2 = assign_ds_ids(ds_list)
+        datasets[ht_ds] = ds_list2
+
+    dataset_list = []
+    [dataset_list.extend(ds_list) for ht_ds, ds_list in datasets.items()]
+
+    return dataset_list
+
 
 
 def put_remote_dataset(s3, bucket, dataset, run_date=None):
@@ -975,17 +1000,85 @@ def process_object_keys(s3, bucket, prefix):
     return infos1
 
 
-def process_real_station(dataset_id, coords, data, connection_config, bucket, geo_type='Point', ref=None, name=None, osm_id=None, altitude=None, properties=None, mod_date=None):
+def process_stations_df(stns_df):
+    """
+    For processing the initial stations prior to assigning the altitude.
+    """
+    stns1 = stns_df.copy()
+    stns1['coords'] = stns1.apply(lambda x: [x.lon, x.lat], axis=1)
+
+    stns1['geo'] = stns1.apply(lambda x: create_geometry(x.coords), axis=1)
+    stns1['station_id'] = stns1.apply(lambda x: assign_station_id(x.geo), axis=1)
+
+    stns2 = stns1.drop_duplicates('station_id').drop('geo', axis=1).copy()
+
+    return stns2
+
+
+def process_station_base(coords, ref=None, name=None, osm_id=None, altitude=None, properties=None, virtual_station=False, geo_type='Point', return_dict=True):
+    """
+
+    """
+    ## Create geometry and station_id
+    geo = create_geometry(coords, geo_type=geo_type)
+    stn_id = assign_station_id(geo)
+
+    ## Put into data model
+    stn_m = StationBase(station_id=stn_id, geometry=geo, ref=ref, name=name, osm_id=osm_id, altitude=altitude, properties=properties, virtual_station=virtual_station)
+
+    if return_dict:
+        stn_m = orjson.loads(stn_m.json(exclude_none=True))
+
+    return stn_m
+
+
+def process_stations_base(stns_list):
+    """
+
+    """
+    stns_dict = {}
+    for s in stns_list:
+        stn_m = process_station_base(**s)
+        stns_dict[stn_m['station_id']] = stn_m
+
+    return stns_dict
+
+
+def get_station_data_from_xr(data):
+    """
+    Parameters
+    ----------
+    data : xr.Dataset
+    """
+    vars1 = list(data.variables)
+    dims1 = list(data.dims.keys())
+    parameter = [v for v in vars1 if 'dataset_id' in data[v].attrs][0]
+    attrs = data[parameter].attrs.copy()
+    data_vars = [parameter]
+    if 'ancillary_variables' in attrs:
+        ancillary_variables = attrs['ancillary_variables'].split(' ')
+        data_vars.extend(ancillary_variables)
+
+    stn_vars = [v for v in vars1 if (not v in dims1) and (not v in data_vars)]
+    stn_data1 = {k: v['data'] for k, v in data[stn_vars].to_dict()['data_vars'].items()}
+    stn_data1['lon'] = round(stn_data1['lon'], 6)
+    stn_data1['lat'] = round(stn_data1['lat'], 6)
+    stn_data1['altitude'] = round(stn_data1['altitude'], 3)
+
+    return stn_data1
+
+
+def process_station_summ(dataset_id, data, connection_config, bucket, mod_date=None):
     """
 
     """
     if mod_date is None:
         mod_date = pd.Timestamp.today(tz='utc').round('s').tz_localize(None)
+    elif isinstance(mod_date, (str, pd.Timestamp)):
+        mod_date = pd.Timestamp(mod_date).tz_localize(None)
 
     ## Genreate the info for the recently created data
-    geo1 = create_geometry(coords, geo_type=geo_type)
-    station_id = assign_station_id(geo1)
-
+    station_id = str(data['station_id'].values)
     stats1 = get_new_stats(data)
 
     s3 = s3_connection(connection_config)
@@ -1014,7 +1107,10 @@ def process_real_station(dataset_id, coords, data, connection_config, bucket, ge
         stats2 = stats1
 
     ## Put it all together
-    station_m = Station(dataset_id=dataset_id, station_id=station_id, virtual_station=False, geometry=geo1, stats=stats2, results_object_key=object_infos1, ref=ref, name=name, osm_id=osm_id, altitude=altitude, properties=properties, modified_date=mod_date)
+    stn_dict2 = get_station_data_from_xr(data)
+    stn_dict2.update({'dataset_id': dataset_id, 'stats': stats2, 'results_object_key': object_infos1, 'modified_date': mod_date})
+
+    station_m = Station(**stn_dict2)
 
     return station_m
 
@@ -1269,6 +1365,151 @@ def process_buffer_threaded(obj_df, remote, run_date_key, threads=30):
     input_list = [[row, remote, run_date_key] for i, row in grp1]
 
     output = ThreadPool(threads).starmap(process_buffer, input_list)
+
+
+def prepare_station_results(data_dict, dataset_list, station_dict, data_df, run_date_key, mod_date=None, sum_closed='right', other_closed='left', discrete=True):
+    """
+
+    """
+    if isinstance(mod_date, (str, pd.Timestamp)):
+        mod_date = pd.Timestamp(mod_date)
+        ancillary_variables = ['modified_date']
+    else:
+        ancillary_variables = []
+    #     mod_date = pd.Timestamp.today(tz='utc').round('s').tz_localize(None)
+
+    ts_data1 = data_df.copy()
+
+    ## Iterate through each dataset
+    for ds in dataset_list:
+        print(ds['dataset_id'])
+
+        ds_mapping = copy.deepcopy(ds)
+        properties = ds_mapping.pop('properties')
+        attrs = properties['attrs']
+        encoding = properties['encoding']
+
+        attrs1 = copy.deepcopy(attrs)
+        attrs1.update({ds_mapping['parameter']: ds_mapping})
+
+        encoding1 = copy.deepcopy(encoding)
+        encoding1.update({ds_mapping['parameter']: properties['encoding']})
+
+        ## Pre-Process data
+        qual_col = 'quality_code'
+        freq_code = ds_mapping['frequency_interval']
+        parameter = ds_mapping['parameter']
+
+        ## Aggregate data if necessary
+        # Parameter
+        if freq_code == 'T':
+            grp1 = ts_data1.groupby(['time', 'height'])
+            data1 = grp1[parameter].mean()
+
+        else:
+            agg_fun = agg_stat_mapping[ds_mapping['aggregation_statistic']]
+
+            if agg_fun == 'sum':
+                data1 = grp_ts_agg(ts_data1[['time', 'height', parameter]], 'height', 'time', freq_code, agg_fun, closed=sum_closed)
+            else:
+                data1 = grp_ts_agg(ts_data1[['time', 'height', parameter]], 'height', 'time', freq_code, agg_fun, discrete, closed=other_closed)
+
+        # Quality code
+        if qual_col in ts_data1.columns:
+            ts_data1[qual_col] = pd.to_numeric(ts_data1[qual_col], errors='coerce', downcast='integer')
+            if freq_code == 'T':
+                qual1 = grp1[qual_col].min()
+            else:
+                qual1 = grp_ts_agg(ts_data1[['time', 'height', qual_col]], 'height', 'time', freq_code, 'min')
+            df3 = pd.concat([data1, qual1], axis=1).reset_index().dropna()
+
+            ancillary_variables.extend([qual_col])
+        else:
+            df3 = data1.reset_index().copy()
+
+        if 'modified_date' in ancillary_variables:
+            df3['modified_date'] = mod_date
+
+        ## Convert to xarray
+        df4 = df3.copy()
+        df4.set_index(['time', 'height'], inplace=True)
+
+        new1 = data_to_xarray(df4, station_dict, parameter, attrs1, encoding1, run_date=run_date_key, ancillary_variables=ancillary_variables, compression='zstd')
+
+        ## Update the data_dict
+        ds_id = ds_mapping['dataset_id']
+        stn_id = station_dict['station_id']
+
+        data_dict[ds_id].append(new1)
+
+
+def update_results_s3(data_dict, conn_config, bucket, threads=20):
+    """
+
+    """
+    s3 = s3_connection(conn_config, threads)
+
+    for ds_id, results in data_dict.items():
+        print('--dataset_id: ' + ds_id)
+
+        def update_result(result):
+            """
+
+            """
+            ## Process data
+            new1 = xr.open_dataset(read_pkl_zstd(result, False))
+
+            stn_id = str(new1['station_id'].values)
+            print('-station_id: ' + stn_id)
+
+            vars1 = list(new1.variables)
+            parameter = [v for v in vars1 if 'dataset_id' in new1[v].attrs][0]
+            attrs = new1[parameter].attrs.copy()
+
+            ds_id = attrs['dataset_id']
+            run_date_key = new1.attrs['history'].split(':')[0]
+
+            up1 = compare_datasets_from_s3(s3, bucket, new1)
+
+            ## Save results
+            if isinstance(up1, xr.Dataset) and (len(up1[parameter].time) > 0):
+
+                print('Save results')
+                key_dict = {'dataset_id': ds_id, 'station_id': stn_id, 'run_date': run_date_key}
+
+                new_key = key_patterns['results'].format(**key_dict)
+
+                cctx = zstd.ZstdCompressor(level=1)
+                c_obj = cctx.compress(up1.to_netcdf())
+
+                s3.put_object(Body=c_obj, Bucket=bucket, Key=new_key, ContentType='application/zstd', Metadata={'run_date': run_date_key})
+
+                ## Process stn data
+                print('Save station data')
+
+                stn_m = process_station_summ(ds_id, up1, conn_config, bucket, mod_date=run_date_key)
+
+                stn4 = orjson.loads(stn_m.json(exclude_none=True))
+                up_stns = put_remote_station(s3, bucket, stn4, run_date=run_date_key)
+            else:
+                print('No new data to update')
+
+        ## Run the threadpool
+        output = ThreadPool(threads).imap_unordered(update_result, results)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -42,19 +42,18 @@ class S3ObjectKey(BaseModel):
     etag: str
     run_date: datetime
 
-# class StationBase(BaseModel):
-#     """
-#     Contains the base station data.
-#     """
-#     station_id: str = Field(..., description='station uuid based on the geometry')
-#     ref: str = None
-#     name: str = None
-#     osm_id: int = None
-#     # virtual_station: bool
-#     lon: float
-#     lat: float
-#     altitude: float
-#     properties: Dict = Field(None, description='Any additional station specific properties.')
+class StationBase(BaseModel):
+    """
+    Contains the base station data.
+    """
+    station_id: str = Field(..., description='station uuid based on the geometry')
+    ref: str = None
+    name: str = None
+    osm_id: int = None
+    virtual_station: bool
+    geometry: Geometry
+    altitude: float
+    properties: Dict = Field(None, description='Any additional station specific properties.')
 
 
 class Station(BaseModel):
