@@ -1225,7 +1225,7 @@ def put_remote_agg_datasets(s3, bucket, threads=20):
     return output
 
 
-def compare_datasets_from_s3(s3, bucket, new_data, add_old=False, read_buffer=False, last_run_date_key=None):
+def compare_datasets_from_s3(conn_config, bucket, new_data, add_old=False, read_buffer=False, last_run_date_key=None, public_url=None):
     """
 
     """
@@ -1244,6 +1244,8 @@ def compare_datasets_from_s3(s3, bucket, new_data, add_old=False, read_buffer=Fa
         base_key_pattern = key_patterns['results']
 
     ## Get list of keys
+    s3 = s3_connection(conn_config)
+
     if isinstance(last_run_date_key, str):
         key_dict.update({'run_date': last_run_date_key})
         last_key = base_key_pattern.format(**key_dict)
@@ -1257,20 +1259,16 @@ def compare_datasets_from_s3(s3, bucket, new_data, add_old=False, read_buffer=Fa
         all_keys = list_parse_s3(s3, bucket, prefix_key)
         last_key1 = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()]
 
-    ## Get list of keys
-    # if read_buffer:
-    #     prefix_key = key_patterns['results_buffer'].split('{run_date}')[0].format(**key_dict)
-    # else:
-    #     prefix_key = key_patterns['results'].split('{run_date}')[0].format(**key_dict)
-    # all_keys = list_parse_s3(s3, bucket, prefix_key)
-    # last_key1 = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()]
-
     ## Get previous data and compare
+    if isinstance(public_url, str):
+        conn_config = public_url
+
     if not last_key1.empty:
         last_key = last_key1.iloc[0]['Key']
-        obj1 = s3.get_object(Bucket=bucket, Key=last_key)
-        b1 = obj1['Body'].read()
-        p_old_one = read_pkl_zstd(b1, False)
+        # obj1 = s3.get_object(Bucket=bucket, Key=last_key)
+        # b1 = obj1['Body'].read()
+        # p_old_one = read_pkl_zstd(b1, False)
+        p_old_one = get_object_s3(last_key, conn_config, bucket, 'zstd')
         xr_old_one = xr.open_dataset(p_old_one)
         xr_old_one['time'] = xr_old_one['time'].dt.round('s')
 
@@ -1443,7 +1441,7 @@ def prepare_station_results(data_dict, dataset_list, station_dict, data_df, run_
         data_dict[ds_id].append(new1)
 
 
-def update_results_s3(data_dict, conn_config, bucket, threads=20):
+def update_results_s3(data_dict, conn_config, bucket, threads=20, add_old=False, read_buffer=False, last_run_date_key=None, public_url=None):
     """
 
     """
@@ -1469,7 +1467,7 @@ def update_results_s3(data_dict, conn_config, bucket, threads=20):
             ds_id = attrs['dataset_id']
             run_date_key = new1.attrs['history'].split(':')[0]
 
-            up1 = compare_datasets_from_s3(s3, bucket, new1)
+            up1 = compare_datasets_from_s3(conn_config, bucket, new1, add_old=add_old, read_buffer=read_buffer, last_run_date_key=last_run_date_key, public_url=public_url)
 
             ## Save results
             if isinstance(up1, xr.Dataset) and (len(up1[parameter].time) > 0):

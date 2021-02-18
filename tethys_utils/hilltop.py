@@ -12,8 +12,8 @@ import xarray as xr
 import orjson
 from time import sleep
 import traceback
-# from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats
-from tethys_utils.main import nc_ts_key_pattern, assign_ds_ids, put_remote_dataset, create_geometry, assign_station_id, grp_ts_agg, read_pkl_zstd, data_to_xarray, process_real_station, put_remote_station, email_msg, s3_connection, agg_stat_mapping, put_remote_agg_datasets, put_remote_agg_stations, list_parse_s3, get_remote_station, compare_datasets_from_s3, process_datasets, process_stations_df, process_stations_base, prepare_station_results, update_results_s3
+from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats
+from tethys_utils.main import nc_ts_key_pattern, assign_ds_ids, put_remote_dataset, create_geometry, assign_station_id, grp_ts_agg, read_pkl_zstd, data_to_xarray, process_station_summ, put_remote_station, email_msg, s3_connection, agg_stat_mapping, put_remote_agg_datasets, put_remote_agg_stations, list_parse_s3, get_remote_station, compare_datasets_from_s3, process_datasets, process_stations_df, process_stations_base, prepare_station_results, update_results_s3
 from tethys_utils.altitude_io import koordinates_raster_query, get_altitude
 import urllib3
 from tethysts.utils import key_patterns
@@ -282,7 +282,7 @@ def convert_site_names(names, rem_m=True):
 
 
 
-def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
+def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, quality_codes=True, public_url=None):
     """
 
     """
@@ -292,14 +292,12 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
     try:
 
         ### Read in parameters
-
         base_url = param['source']['api_endpoint']
         hts = param['source']['hts']
 
         datasets = param['source']['datasets']
 
         ### Initalize
-
         run_date = pd.Timestamp.today(tz='utc').round('s')
         # run_date_local = run_date.tz_convert(ts_local_tz).tz_localize(None).strftime('%Y-%m-%d %H:%M:%S')
         run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
@@ -382,9 +380,9 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
                                     ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, agg_method='Total', agg_interval='1 day')[1:].reset_index()
                             else:
                                 if row['corrections']:
-                                    ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, from_date=str(row.From), to_date=str(row.To), quality_codes=True)
+                                    ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, from_date=str(row.From), to_date=str(row.To), quality_codes=quality_codes)
                                 else:
-                                    ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, quality_codes=True)
+                                    ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, quality_codes=quality_codes)
 
                             break
                         except requests.exceptions.ConnectionError as err:
@@ -431,7 +429,7 @@ def get_qc_hilltop_data(param, ts_local_tz, station_mtype_corrections=None):
     try:
 
         ### Save results and stations
-        update_results_s3(data_dict, param['remote']['connection_config'], param['remote']['bucket'], threads=20)
+        update_results_s3(data_dict, param['remote']['connection_config'], param['remote']['bucket'], threads=20, public_url=public_url)
 
         ### Aggregate all stations for the dataset
         print('Aggregate all stations for the dataset and all datasets in the bucket')
