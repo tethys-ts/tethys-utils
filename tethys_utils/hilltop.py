@@ -307,12 +307,12 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
         ### Create dataset_ids
         dataset_list = process_datasets(datasets)
 
-        ## Create the data_dict
-        data_dict = {d['dataset_id']: [] for d in dataset_list}
-
         for meas in datasets:
-
+            print('----- Starting new dataset group -----')
             print(meas)
+
+            ## Create the data_dict
+            data_dict = {d['dataset_id']: [] for d in datasets[meas]}
 
             ### Pull out stations
             stns1 = ws.site_list(base_url, hts, location='LatLong') # There's a problem with Hilltop that requires running the site list without a measurement first...
@@ -323,7 +323,7 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
             stns2 = process_stations_df(stns2)
 
             ## Update sites with altitude
-            print('Get altitude from Tethys stations if they exist else koordinates')
+            print('-- Get altitude from Tethys stations if they exist else koordinates')
             stn_alt = get_altitude(stns2, datasets[meas][0]['dataset_id'], param['source']['koordinates_key'], param['remote'])
 
             stns2 = pd.merge(stns2, stn_alt[['station_id', 'altitude']], on='station_id')
@@ -334,7 +334,7 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
             stns_dict = process_stations_base(stns_list)
 
             ### Get the Hilltop measurement types
-            print('-Running through station/measurement combos')
+            print('-- Running through station/measurement combos')
 
             mtypes_list = []
             for s in stns2.ref:
@@ -359,7 +359,7 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
             if not mtypes_df.empty:
 
                 ##  Iterate through each stn
-                print('Iterate through each station')
+                print('-- Iterate through each station')
                 for i, row in mtypes_df.iterrows():
                     print(row.ref)
 
@@ -418,7 +418,12 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
 
                     ###########################################
                     ## Package up into the data_dict
-                    prepare_station_results(data_dict, datasets[meas], stn, ts_data1, run_date_key, mod_date)
+                    if not ts_data1.empty:
+                        prepare_station_results(data_dict, datasets[meas], stn, ts_data1, run_date_key, mod_date)
+
+            ########################################
+            ### Save results and stations
+            update_results_s3(data_dict, param['remote']['connection_config'], param['remote']['bucket'], threads=10, public_url=public_url)
 
 
     except Exception as err:
@@ -427,9 +432,6 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
         email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc())
 
     try:
-
-        ### Save results and stations
-        update_results_s3(data_dict, param['remote']['connection_config'], param['remote']['bucket'], threads=20, public_url=public_url)
 
         ### Aggregate all stations for the dataset
         print('Aggregate all stations for the dataset and all datasets in the bucket')
@@ -447,3 +449,36 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
         # print(err)
         print(traceback.format_exc())
         email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc())
+
+
+
+
+###################################################
+### Testing
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

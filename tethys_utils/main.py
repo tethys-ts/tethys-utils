@@ -980,8 +980,8 @@ def get_new_stats(data):
 
     min1 = round(float(data[parameter].min()), precision)
     max1 = round(float(data[parameter].max()), precision)
-    from_date = pd.Timestamp(data['time'].min().values)
-    to_date = pd.Timestamp(data['time'].max().values)
+    from_date = pd.Timestamp(data['time'].min().values).tz_localize(None)
+    to_date = pd.Timestamp(data['time'].max().values).tz_localize(None)
 
     stats1 = Stats(min=min1, max=max1, from_date=from_date, to_date=to_date)
 
@@ -1061,8 +1061,11 @@ def get_station_data_from_xr(data):
 
     stn_vars = [v for v in vars1 if (not v in dims1) and (not v in data_vars)]
     stn_data1 = {k: v['data'] for k, v in data[stn_vars].to_dict()['data_vars'].items()}
-    stn_data1['lon'] = round(stn_data1['lon'], 6)
-    stn_data1['lat'] = round(stn_data1['lat'], 6)
+    stn_data1['geometry'] = create_geometry([stn_data1['lon'], stn_data1['lat']])
+    # stn_data1['lon'] = stn_data1['geometry']['coordinates'][0]
+    # stn_data1['lat'] = stn_data1['geometry']['coordinates'][1]
+    stn_data1.pop('lon')
+    stn_data1.pop('lat')
     stn_data1['altitude'] = round(stn_data1['altitude'], 3)
 
     return stn_data1
@@ -1099,8 +1102,8 @@ def process_station_summ(dataset_id, data, connection_config, bucket, mod_date=N
         old_stats = old_stn_data['stats']
         min1 = min([old_stats['min'], stats1.min])
         max1 = max([old_stats['max'], stats1.max])
-        to_date = max([pd.Timestamp(old_stats['to_date']), stats1.to_date])
-        from_date = min([pd.Timestamp(old_stats['from_date']), stats1.from_date])
+        to_date = max([pd.Timestamp(old_stats['to_date']).tz_localize(None), stats1.to_date])
+        from_date = min([pd.Timestamp(old_stats['from_date']).tz_localize(None), stats1.from_date])
 
         stats2 = Stats(min=min1, max=max1, from_date=from_date, to_date=to_date)
     else:
@@ -1227,7 +1230,27 @@ def put_remote_agg_datasets(s3, bucket, threads=20):
 
 def compare_datasets_from_s3(conn_config, bucket, new_data, add_old=False, read_buffer=False, last_run_date_key=None, public_url=None):
     """
+    Parameters
+    ----------
+    conn_config : dict
+        A dictionary of the connection info necessary to establish an S3 connection.
+    bucket : str
+        The S3 bucket.
+    new_data : xr.Dataset
+        The new data that should be compared to existing data in S3.
+    add_old : bool
+        Should the data in the S3 be added to the output?
+    read_buffer : bool
+        Should the results buffer file be read instead of the normal results file?
+    last_run_date_key : str
+        Specify the last run key instead of having the function figure it out. The function will do a check to make sure that the key exists.
+    public_url : str
+        Optional if there is a public URL to the object instead of using the S3 API directly.
 
+    Returns
+    -------
+    xr.Dataset
+        Of the data that should be updated.
     """
     ## Determine the parameter, station_id, and dataset_id
     vars1 = list(new_data.variables)
@@ -1265,9 +1288,6 @@ def compare_datasets_from_s3(conn_config, bucket, new_data, add_old=False, read_
 
     if not last_key1.empty:
         last_key = last_key1.iloc[0]['Key']
-        # obj1 = s3.get_object(Bucket=bucket, Key=last_key)
-        # b1 = obj1['Body'].read()
-        # p_old_one = read_pkl_zstd(b1, False)
         p_old_one = get_object_s3(last_key, conn_config, bucket, 'zstd')
         xr_old_one = xr.open_dataset(p_old_one)
         xr_old_one['time'] = xr_old_one['time'].dt.round('s')
@@ -1441,8 +1461,30 @@ def prepare_station_results(data_dict, dataset_list, station_dict, data_df, run_
         data_dict[ds_id].append(new1)
 
 
-def update_results_s3(data_dict, conn_config, bucket, threads=20, add_old=False, read_buffer=False, last_run_date_key=None, public_url=None):
+def update_results_s3(data_dict, conn_config, bucket, threads=10, add_old=False, read_buffer=False, last_run_date_key=None, public_url=None):
     """
+    Parameters
+    ----------
+    data_dict : dict of lists
+        A dictionary with the keys as the dataset_ids and teh values as lists of zstd compressed xr.Datasets.
+    conn_config : dict
+        A dictionary of the connection info necessary to establish an S3 connection.
+    bucket : str
+        The S3 bucket.
+    threads : int
+        The number of threads to use to process the data.
+    add_old : bool
+        Should the data in the S3 be added to the output?
+    read_buffer : bool
+        Should the results buffer file be read instead of the normal results file?
+    last_run_date_key : str
+        Specify the last run key instead of having the function figure it out. The function will do a check to make sure that the key exists.
+    public_url : str
+        Optional if there is a public URL to the object instead of using the S3 API directly.
+
+    Returns
+    -------
+    None
 
     """
     s3 = s3_connection(conn_config, threads)
@@ -1455,10 +1497,14 @@ def update_results_s3(data_dict, conn_config, bucket, threads=20, add_old=False,
 
             """
             ## Process data
-            new1 = xr.open_dataset(read_pkl_zstd(result, False))
+            try:
+                new1 = xr.load_dataset(read_pkl_zstd(result, False))
+            except:
+                print('Data could not be opened')
+                return None
 
             stn_id = str(new1['station_id'].values)
-            print('-station_id: ' + stn_id)
+            print('station_id: ' + stn_id)
 
             vars1 = list(new1.variables)
             parameter = [v for v in vars1 if 'dataset_id' in new1[v].attrs][0]
@@ -1489,12 +1535,75 @@ def update_results_s3(data_dict, conn_config, bucket, threads=20, add_old=False,
 
                 stn4 = orjson.loads(stn_m.json(exclude_none=True))
                 up_stns = put_remote_station(s3, bucket, stn4, run_date=run_date_key)
+
             else:
                 print('No new data to update')
 
-        ## Run the threadpool
-        output = ThreadPool(threads).imap_unordered(update_result, results)
+            ## Get rid of big objects
+            new1 = None
+            up1 = None
 
+
+        ## Run the threadpool
+        # output = ThreadPool(threads).imap_unordered(update_result, results)
+        with ThreadPool(threads) as pool:
+            output = pool.map(update_result, results)
+            pool.close()
+            pool.join()
+
+
+
+def delete_result_objects_s3(conn_config, bucket, dataset_ids=None, keep_last=10):
+    """
+    Parameters
+    ----------
+    conn_config : dict
+        A dictionary of the connection info necessary to establish an S3 connection.
+    bucket : str
+
+    dataset_ids : list or str
+        The specific datasets that should have the results objects removed. None will remove results objects from all datasets in the bucket.
+    keep_last : int
+        That last number of runs that should be kept. E.g. a value of 4 will kepp the last 4 runs and remove all prior runs.
+    """
+    s3 = s3_connection(conn_config)
+
+    if isinstance(dataset_ids, str):
+        dataset_ids = [dataset_ids]
+
+    prefix = key_patterns['results'].split('{dataset_id}')[0]
+
+    obj_list = list_parse_s3(s3, bucket, prefix)
+    obj_list1 = obj_list[obj_list.KeyDate.notnull()].copy()
+    # dates1 = obj_list1['KeyDate'].unique()
+    # dates1.sort()
+    key_split = obj_list1['Key'].str.split('/')
+    obj_list1['dataset_id'] = key_split.apply(lambda x: x[2])
+    obj_list1['station_id'] = key_split.apply(lambda x: x[3])
+
+    if isinstance(dataset_ids, list):
+        obj_list1 = obj_list1[obj_list1['dataset_id'].isin(dataset_ids)].copy()
+
+    ## Get the keys to the objects that should be removed
+    obj_list2 = obj_list1.groupby(['dataset_id', 'station_id'])
+
+    rem_keys = []
+    for i, row in obj_list2:
+        rem1 = row.sort_values('KeyDate', ascending=False).iloc[keep_last:]
+        rem_keys.extend(rem1['Key'].tolist())
+
+    if len(rem_keys) > 0:
+        ## Split them into 1000 key chunks
+        rem_keys_chunks = np.array_split(rem_keys, int(np.ceil(len(rem_keys)/1000)))
+
+        ## Run through and delete the objects...
+        for keys in rem_keys_chunks:
+            del_list = [{'Key': k} for k in keys]
+            resp = s3.delete_objects(Bucket=bucket, Delete={'Objects': del_list})
+
+    print(str(len(rem_keys)) + ' objects removed')
+
+    return rem_keys
 
 
 
@@ -1549,3 +1658,16 @@ def update_results_s3(data_dict, conn_config, bucket, threads=20, add_old=False,
 # def uround(t, freq):
 #     freq = to_offset(freq)
 #     return pd.Timestamp((t.value // freq.delta.value) * freq.delta.value)
+
+# d1 = '269eda15b277ffd824c223fc'
+# s1 = '59647c5fd331f9fad60e8df0'
+
+# with open('/media/sdb1/Projects/git/tethys/tethys-extraction-es-hilltop/env-monitoring/data_dict.pkl', 'wb') as handle:
+#     pickle.dump(data_dict, handle)
+
+# with open('/media/sdb1/Projects/git/tethys/tethys-extraction-es-hilltop/env-monitoring/data_dict.pkl', 'rb') as handle:
+#     data_dict = pickle.load(handle)
+
+# write_pkl_zstd(data_dict, '/media/sdb1/Projects/git/tethys/tethys-extraction-es-hilltop/env-monitoring/data_dict.pkl.zstd')
+
+# data_dict = read_pkl_zstd('/media/sdb1/Projects/git/tethys/tethys-extraction-es-hilltop/env-monitoring/data_dict.pkl.zstd')
