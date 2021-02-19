@@ -364,7 +364,7 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
                     print(row.ref)
 
                     ## Get the data out
-                    print('- Extracting data...')
+                    # print('- Extracting data...')
 
                     bad_error = False
                     timer = 5
@@ -429,7 +429,7 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
     except Exception as err:
         # print(err)
         print(traceback.format_exc())
-        email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc())
+        email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc(), param['remote']['email']['smtp_server'])
 
     try:
 
@@ -448,37 +448,10 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
     except Exception as err:
         # print(err)
         print(traceback.format_exc())
-        email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc())
+        email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc(), param['remote']['email']['smtp_server'])
 
 
 
 
 ###################################################
 ### Testing
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
