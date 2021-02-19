@@ -1411,7 +1411,6 @@ def prepare_station_results(data_dict, dataset_list, station_dict, data_df, run_
         attrs1.update({ds_mapping['parameter']: ds_mapping})
 
         encoding1 = copy.deepcopy(encoding)
-        encoding1.update({ds_mapping['parameter']: properties['encoding']})
 
         ## Pre-Process data
         qual_col = 'quality_code'
@@ -1575,8 +1574,6 @@ def delete_result_objects_s3(conn_config, bucket, dataset_ids=None, keep_last=10
 
     obj_list = list_parse_s3(s3, bucket, prefix)
     obj_list1 = obj_list[obj_list.KeyDate.notnull()].copy()
-    # dates1 = obj_list1['KeyDate'].unique()
-    # dates1.sort()
     key_split = obj_list1['Key'].str.split('/')
     obj_list1['dataset_id'] = key_split.apply(lambda x: x[2])
     obj_list1['station_id'] = key_split.apply(lambda x: x[3])
