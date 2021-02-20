@@ -1409,7 +1409,7 @@ def process_buffer_threaded(obj_df, remote, run_date_key, threads=30):
     output = ThreadPool(threads).starmap(process_buffer, input_list)
 
 
-def process_buffer_last_run_date(ex_dataset_id, dataset_list, run_date, remote):
+def process_buffer_last_run_date(ex_dataset_id, dataset_list, run_date, remote, days_prior=7):
     """
 
     """
@@ -1427,10 +1427,10 @@ def process_buffer_last_run_date(ex_dataset_id, dataset_list, run_date, remote):
         last_run_date = obj_list['KeyDate'].max()
         last_run_date_key = last_run_date.strftime('%Y%m%dT%H%M%SZ')
 
-    if last_run_date < (run_date - pd.DateOffset(days=7)):
+    if last_run_date < (run_date - pd.DateOffset(days=days_prior)):
         obj_df2 = get_filtered_obj_list(remote, dataset_list)
         obj_df3 = get_last_results(obj_df2)
-        obj_df4 = filter_old_ones(obj_df3, run_date, 7)
+        obj_df4 = filter_old_ones(obj_df3, run_date, days_prior)
         process_buffer_threaded(obj_df4, remote, run_date_key)
 
         last_run_date = run_date
