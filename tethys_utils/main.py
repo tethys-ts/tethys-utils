@@ -1409,6 +1409,39 @@ def process_buffer_threaded(obj_df, remote, run_date_key, threads=30):
     output = ThreadPool(threads).starmap(process_buffer, input_list)
 
 
+def process_buffer_last_run_date(ex_dataset_id, dataset_list, run_date, remote):
+    """
+
+    """
+    run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
+
+    s3 = s3_connection(remote['connection_config'])
+
+    prefix = key_patterns['results'].split('{station_id}')[0].format(dataset_id=ex_dataset_id)
+    obj_list = list_parse_s3(s3, remote['bucket'], prefix)
+
+    if obj_list.empty:
+        last_run_date = run_date
+        last_run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
+    else:
+        last_run_date = obj_list['KeyDate'].max()
+        last_run_date_key = last_run_date.strftime('%Y%m%dT%H%M%SZ')
+
+    if last_run_date < (run_date - pd.DateOffset(days=7)):
+        obj_df2 = get_filtered_obj_list(remote, dataset_list)
+        obj_df3 = get_last_results(obj_df2)
+        obj_df4 = filter_old_ones(obj_df3, run_date, 7)
+        process_buffer_threaded(obj_df4, remote, run_date_key)
+
+        last_run_date = run_date
+        last_run_date_key = run_date_key
+
+        print('Old buffer data has been processed. A new result date has been created.')
+
+    return last_run_date_key
+
+
+
 def prepare_station_results(data_dict, dataset_list, station_dict, data_df, run_date_key, mod_date=None, sum_closed='right', other_closed='left', discrete=True):
     """
 
@@ -1500,7 +1533,7 @@ def update_results_s3(data_dict, conn_config, bucket, threads=10, add_old=False,
     threads : int
         The number of threads to use to process the data.
     add_old : bool
-        Should the data in the S3 be added to the output?
+        Should the data in the S3 be added to the output? Ususally needed for writing to buffer with real-time data.
     read_buffer : bool
         Should the results buffer file be read instead of the normal results file?
     last_run_date_key : str
