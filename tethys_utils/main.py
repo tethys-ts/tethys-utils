@@ -1580,7 +1580,10 @@ def update_results_s3(data_dict, conn_config, bucket, threads=10, add_old=False,
                 print('Save results')
                 key_dict = {'dataset_id': ds_id, 'station_id': stn_id, 'run_date': run_date_key}
 
-                new_key = key_patterns['results'].format(**key_dict)
+                if read_buffer:
+                    new_key = key_patterns['results_buffer'].format(**key_dict)
+                else:
+                    new_key = key_patterns['results'].format(**key_dict)
 
                 cctx = zstd.ZstdCompressor(level=1)
                 c_obj = cctx.compress(up1.to_netcdf())
