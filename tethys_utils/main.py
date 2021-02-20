@@ -1313,7 +1313,7 @@ def compare_datasets_from_s3(conn_config, bucket, new_data, add_old=False, read_
     if not last_key1.empty:
         last_key = last_key1.iloc[0]['Key']
         p_old_one = get_object_s3(last_key, conn_config, bucket, 'zstd')
-        xr_old_one = xr.open_dataset(p_old_one)
+        xr_old_one = xr.load_dataset(p_old_one)
         xr_old_one['time'] = xr_old_one['time'].dt.round('s')
 
         up1 = compare_xrs(xr_old_one, new_data, add_old=add_old)
@@ -1380,7 +1380,7 @@ def process_buffer(row, remote, run_date_key):
     for i, r in row.iterrows():
         obj1 = get_object_s3(r['Key'], remote['connection_config'], remote['bucket'], 'zstd')
         b1 = io.BytesIO(obj1)
-        xr1 = xr.open_dataset(b1)
+        xr1 = xr.load_dataset(b1)
         data_list.append(xr1)
 
     xr2 = xr.concat(data_list, dim='time', data_vars='minimal')
