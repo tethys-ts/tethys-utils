@@ -288,7 +288,7 @@ def read_pkl_zstd(obj, unpickle=True):
     return obj1
 
 
-def put_s3_object(s3, bucket, obj, dataset_id, station_id, run_date=None, content_type='application/zstd'):
+def put_result_object_s3(s3, bucket, obj, dataset_id, station_id, run_date=None, content_type='application/zstd'):
     """
 
     """
@@ -1015,16 +1015,19 @@ def process_stations_df(stns_df):
     return stns2
 
 
-def process_station_base(coords, ref=None, name=None, osm_id=None, altitude=None, properties=None, virtual_station=False, geo_type='Point', return_dict=True):
+def process_station_base(coords=None, station_id=None, geometry=None, ref=None, name=None, osm_id=None, altitude=None, properties=None, virtual_station=False, geo_type='Point', return_dict=True):
     """
 
     """
-    ## Create geometry and station_id
-    geo = create_geometry(coords, geo_type=geo_type)
-    stn_id = assign_station_id(geo)
+    if isinstance(coords, list):
+        ## Create geometry and station_id
+        geometry = create_geometry(coords, geo_type=geo_type)
+        station_id = assign_station_id(geometry)
+    elif (not isinstance(station_id, str)) & (not isinstance(geometry, dict)):
+        raise ValueError('coords or station_id must be assigned')
 
     ## Put into data model
-    stn_m = StationBase(station_id=stn_id, geometry=geo, ref=ref, name=name, osm_id=osm_id, altitude=altitude, properties=properties, virtual_station=virtual_station)
+    stn_m = StationBase(station_id=station_id, geometry=geometry, ref=ref, name=name, osm_id=osm_id, altitude=altitude, properties=properties, virtual_station=virtual_station)
 
     if return_dict:
         stn_m = orjson.loads(stn_m.json(exclude_none=True))
@@ -1068,10 +1071,13 @@ def get_station_data_from_xr(data):
     stn_data1.pop('lat')
     stn_data1['altitude'] = round(stn_data1['altitude'], 3)
 
+    ## Check model
+    stn_m = StationBase(**stn_data1)
+
     return stn_data1
 
 
-def process_station_summ(dataset_id, data, connection_config, bucket, mod_date=None):
+def process_station_summ(dataset_id, station_id, connection_config, bucket, mod_date=None, public_url=None):
     """
 
     """
@@ -1080,7 +1086,25 @@ def process_station_summ(dataset_id, data, connection_config, bucket, mod_date=N
     elif isinstance(mod_date, (str, pd.Timestamp)):
         mod_date = pd.Timestamp(mod_date).tz_localize(None)
 
-    ## Genreate the info for the recently created data
+    ## Determine the latest result
+    s3 = s3_connection(connection_config)
+    prefix = key_patterns['results'].split('{run_date}')[0].format(dataset_id=dataset_id, station_id=station_id)
+    object_infos1 = process_object_keys(s3, bucket, prefix)
+
+    obj_list = [s.dict() for s in object_infos1 if s.dict()['key'].endswith('results.nc.zst')]
+    max_date = max([s['run_date'] for s in obj_list])
+    last_key = [s['key'] for s in obj_list if s['run_date'] == max_date][0]
+
+    ## Get the results
+    if isinstance(public_url, str):
+        connection_config = public_url
+
+    data_obj = get_object_s3(last_key, connection_config, bucket, 'zstd')
+    data = xr.load_dataset(data_obj)
+
+
+
+    ## Generate the info for the recently created data
     station_id = str(data['station_id'].values)
     stats1 = get_new_stats(data)
 
@@ -1404,7 +1428,10 @@ def prepare_station_results(data_dict, dataset_list, station_dict, data_df, run_
 
         ds_mapping = copy.deepcopy(ds)
         properties = ds_mapping.pop('properties')
-        attrs = properties['attrs']
+        if 'attrs' in properties:
+            attrs = properties['attrs']
+        else:
+            attrs = {}
         encoding = properties['encoding']
 
         attrs1 = copy.deepcopy(attrs)
@@ -1530,7 +1557,7 @@ def update_results_s3(data_dict, conn_config, bucket, threads=10, add_old=False,
                 ## Process stn data
                 print('Save station data')
 
-                stn_m = process_station_summ(ds_id, up1, conn_config, bucket, mod_date=run_date_key)
+                stn_m = process_station_summ(ds_id, stn_id, conn_config, bucket, mod_date=run_date_key, public_url=public_url)
 
                 stn4 = orjson.loads(stn_m.json(exclude_none=True))
                 up_stns = put_remote_station(s3, bucket, stn4, run_date=run_date_key)
@@ -1599,6 +1626,8 @@ def delete_result_objects_s3(conn_config, bucket, dataset_ids=None, keep_last=10
             resp = s3.delete_objects(Bucket=bucket, Delete={'Objects': del_list})
 
     print(str(len(rem_keys)) + ' objects removed')
+    print('Updating stations...')
+
 
     return rem_keys
 
