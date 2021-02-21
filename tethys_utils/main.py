@@ -1520,7 +1520,7 @@ def prepare_station_results(data_dict, dataset_list, station_dict, data_df, run_
         data_dict[ds_id].append(new1)
 
 
-def update_results_s3(data_dict, conn_config, bucket, threads=10, add_old=False, read_buffer=False, last_run_date_key=None, public_url=None):
+def update_results_s3(data_dict, conn_config, bucket, threads=10, add_old=False, read_buffer=False, last_run_date_key=None, public_url=None, no_comparison=False):
     """
     Parameters
     ----------
@@ -1572,7 +1572,10 @@ def update_results_s3(data_dict, conn_config, bucket, threads=10, add_old=False,
             ds_id = attrs['dataset_id']
             run_date_key = new1.attrs['history'].split(':')[0]
 
-            up1 = compare_datasets_from_s3(conn_config, bucket, new1, add_old=add_old, read_buffer=read_buffer, last_run_date_key=last_run_date_key, public_url=public_url)
+            if no_comparison:
+                up1 = new1
+            else:
+                up1 = compare_datasets_from_s3(conn_config, bucket, new1, add_old=add_old, read_buffer=read_buffer, last_run_date_key=last_run_date_key, public_url=public_url)
 
             ## Save results
             if isinstance(up1, xr.Dataset) and (len(up1[parameter].time) > 0):
