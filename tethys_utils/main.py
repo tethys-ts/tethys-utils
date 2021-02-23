@@ -199,7 +199,7 @@ def write_json_zstd(data, compress_level=1):
     bytes object
 
     """
-    json1 = orjson.dumps(data)
+    json1 = orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY)
     cctx = zstd.ZstdCompressor(level=compress_level)
     c_obj = cctx.compress(json1)
 
@@ -856,7 +856,7 @@ def assign_ds_ids(datasets):
         ds_m = DatasetBase(**ds)
 
         base_ds = {k: ds[k] for k in base_ds_fields}
-        base_ds_b = orjson.dumps(base_ds)
+        base_ds_b = orjson.dumps(base_ds, option=orjson.OPT_SERIALIZE_NUMPY)
         ds_id = blake2b(base_ds_b, digest_size=12).hexdigest()
 
         ds['dataset_id'] = ds_id
@@ -965,7 +965,7 @@ def assign_station_id(geometry):
     """
 
     """
-    station_id = blake2b(orjson.dumps(geometry), digest_size=12).hexdigest()
+    station_id = blake2b(orjson.dumps(geometry, option=orjson.OPT_SERIALIZE_NUMPY), digest_size=12).hexdigest()
 
     return station_id
 
