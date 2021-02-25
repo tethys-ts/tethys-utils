@@ -947,14 +947,16 @@ def create_geometry(coords, geo_type='Point'):
     """
 
     """
+    # print(type(coords[0]))
     if geo_type == 'Point':
-        coords = [round(coords[0], 5), round(coords[1], 5)]
-        geo1 = Point(coords)
+        coords = [np.round(coords[0], 5), np.round(coords[1], 5)]
+        # geo1 = Point(coords)
+        geo1 = {"coordinates": coords, "type": "Point"}
     else:
         raise ValueError('geo_type not implemented yet')
 
-    if not geo1.is_valid:
-        raise ValueError('coordinates are not valid')
+    # if not geo1.is_valid:
+    #     raise ValueError('coordinates are not valid')
 
     geo2 = Geometry(**geo1).dict()
 
