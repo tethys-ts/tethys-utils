@@ -1200,7 +1200,7 @@ def put_remote_station(s3, bucket, station, run_date=None):
     return stn5
 
 
-def put_remote_agg_stations(s3, bucket, dataset_id, threads=20):
+def put_remote_agg_stations(s3, bucket, dataset_id, threads=30):
     """
 
     """
@@ -1226,7 +1226,7 @@ def put_remote_agg_stations(s3, bucket, dataset_id, threads=20):
     return output
 
 
-def put_remote_agg_datasets(s3, bucket, threads=20):
+def put_remote_agg_datasets(s3, bucket, threads=30):
     """
 
     """
@@ -1665,8 +1665,15 @@ def delete_result_objects_s3(conn_config, bucket, dataset_ids=None, keep_last=10
             resp = s3.delete_objects(Bucket=bucket, Delete={'Objects': del_list})
 
     print(str(len(rem_keys)) + ' objects removed')
-    print('Updating stations...')
+    print('Updating stations and dataset json files...')
 
+    dataset_list = obj_list1['dataset_id'].unique().tolist()
+
+    for ds in dataset_list:
+        ds_stations = put_remote_agg_stations(s3, bucket, ds)
+
+    ### Aggregate all datasets for the bucket
+    ds_all = put_remote_agg_datasets(s3, bucket)
 
     return rem_keys
 
