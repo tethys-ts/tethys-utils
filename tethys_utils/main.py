@@ -1072,6 +1072,8 @@ def get_station_data_from_xr(data):
     stn_data1.pop('lon')
     stn_data1.pop('lat')
     stn_data1['altitude'] = round(stn_data1['altitude'], 3)
+    if not 'virtual_station' in stn_data1:
+        stn_data1['virtual_station'] = False
 
     ## Check model
     stn_m = StationBase(**stn_data1)
