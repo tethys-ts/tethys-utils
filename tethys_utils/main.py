@@ -1094,33 +1094,29 @@ def process_station_summ(dataset_id, station_id, connection_config, bucket, mod_
     s3 = s3_connection(connection_config)
     prefix = key_patterns['results'].split('{run_date}')[0].format(dataset_id=dataset_id, station_id=station_id)
 
-    counter = 5
-    while True:
-        object_infos1 = process_object_keys(s3, bucket, prefix)
-        obj_list = [s.dict() for s in object_infos1 if s.dict()['key'].endswith('results.nc.zst')]
-        run_dates = [s['run_date'] for s in obj_list]
+    object_infos1 = process_object_keys(s3, bucket, prefix)
+    obj_list = [s.dict() for s in object_infos1 if s.dict()['key'].find('results') > 0]
+    obj_keys_df = pd.DataFrame(obj_list)
+    last_run_date = obj_keys_df['run_date'].max()
+    obj_key = obj_keys_df[obj_keys_df['run_date'] == last_run_date]['key']
 
-        if len(run_dates) == 0:
-            if counter == 0:
-                print('Could not get run dates from S3 after several tries...')
-                print('dataset_id: ' + dataset_id)
-                print('station_id: ' + station_id)
-            else:
-                print('Could not get run dates from S3, trying again...')
-                counter = counter -1
-                sleep(10)
-        else:
-            break
-
-    max_date = max(run_dates)
-    last_key = [s['key'] for s in obj_list if s['run_date'] == max_date][0]
+    if obj_key.empty:
+        raise ValueError("""**Could not get run dates from S3...
+                            dataset_id: {ds_id}
+                            station_id: {stn_id}""".format(ds_id=dataset_id, stn_id=station_id))
 
     ## Get the results
     if isinstance(public_url, str):
         connection_config = public_url
 
-    data_obj = get_object_s3(last_key, connection_config, bucket, 'zstd')
-    data = xr.load_dataset(data_obj)
+    data_list = []
+    for key in obj_key:
+        ts_obj = get_object_s3(key, connection_config, bucket, 'zstd')
+        ts_xr = xr.load_dataset(ts_obj)
+        data_list.append(ts_xr)
+
+    xr2 = xr.concat(data_list, dim='time', data_vars='minimal')
+    data = xr2.sel(time=~xr2.get_index('time').duplicated('last'))
 
     ## Generate the info for the recently created data
     station_id = str(data['station_id'].values)
