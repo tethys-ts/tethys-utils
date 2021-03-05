@@ -1093,10 +1093,26 @@ def process_station_summ(dataset_id, station_id, connection_config, bucket, mod_
     ## Determine the latest result
     s3 = s3_connection(connection_config)
     prefix = key_patterns['results'].split('{run_date}')[0].format(dataset_id=dataset_id, station_id=station_id)
-    object_infos1 = process_object_keys(s3, bucket, prefix)
 
-    obj_list = [s.dict() for s in object_infos1 if s.dict()['key'].endswith('results.nc.zst')]
-    max_date = max([s['run_date'] for s in obj_list])
+    counter = 5
+    while True:
+        object_infos1 = process_object_keys(s3, bucket, prefix)
+        obj_list = [s.dict() for s in object_infos1 if s.dict()['key'].endswith('results.nc.zst')]
+        run_dates = [s['run_date'] for s in obj_list]
+
+        if len(run_dates) == 0:
+            if counter == 0:
+                print('Could not get run dates from S3 after several tries...')
+                print('dataset_id: ' + dataset_id)
+                print('station_id: ' + station_id)
+            else:
+                print('Could not get run dates from S3, trying again...')
+                counter = counter -1
+                sleep(10)
+        else:
+            break
+
+    max_date = max(run_dates)
     last_key = [s['key'] for s in obj_list if s['run_date'] == max_date][0]
 
     ## Get the results
@@ -1109,31 +1125,6 @@ def process_station_summ(dataset_id, station_id, connection_config, bucket, mod_
     ## Generate the info for the recently created data
     station_id = str(data['station_id'].values)
     stats1 = get_new_stats(data)
-
-    # s3 = s3_connection(connection_config)
-    # prefix = key_patterns['results'].split('{run_date}')[0].format(dataset_id=dataset_id, station_id=station_id)
-
-    # object_infos1 = process_object_keys(s3, bucket, prefix)
-
-    # ## Get old data
-    # stn_key = key_patterns['station'].format(dataset_id=dataset_id, station_id=station_id)
-
-    # try:
-    #     old_stn_data_obj = get_object_s3(stn_key, connection_config, bucket)
-    #     old_stn_data = read_json_zstd(old_stn_data_obj)
-    # except:
-    #     old_stn_data = {}
-
-    # if old_stn_data:
-    #     old_stats = old_stn_data['stats']
-    #     min1 = min([old_stats['min'], stats1.min])
-    #     max1 = max([old_stats['max'], stats1.max])
-    #     to_date = max([pd.Timestamp(old_stats['to_date']).tz_localize(None), stats1.to_date])
-    #     from_date = min([pd.Timestamp(old_stats['from_date']).tz_localize(None), stats1.from_date])
-
-    #     stats2 = Stats(min=min1, max=max1, from_date=from_date, to_date=to_date)
-    # else:
-    #     stats2 = stats1
 
     ## Put it all together
     stn_dict2 = get_station_data_from_xr(data)
