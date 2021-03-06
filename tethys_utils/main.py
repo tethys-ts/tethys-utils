@@ -1431,7 +1431,7 @@ def process_buffer_threaded(obj_df, remote, run_date_key, threads=30):
 #     return last_run_date_key
 
 
-def process_run_date(processing_code, dataset_list, remote, run_date=None, days_prior=14):
+def process_run_date(processing_code, dataset_list, remote, run_date=None, days_prior=7):
     """
     Function to process the run date keys for all datasets for the extraction. These are specific to each processing_code.
 
@@ -1487,12 +1487,15 @@ def process_run_date(processing_code, dataset_list, remote, run_date=None, days_
                 obj_df2 = get_filtered_obj_list(remote, dataset_list)
                 obj_df3 = get_last_results(obj_df2)
                 obj_df4 = filter_old_ones(obj_df3, run_date1, days_prior)
-                process_buffer_threaded(obj_df4, remote, run_date_key)
 
-                last_run_date = run_date1
-                last_run_date_key = run_date_key
+                last_run_date_key = last_run_date.strftime('%Y%m%dT%H%M%SZ')
 
-                print('Old buffer data has been processed. A new result date has been created.')
+                process_buffer_threaded(obj_df4, remote, last_run_date_key)
+
+                # last_run_date = run_date1
+                # last_run_date_key = run_date_key
+
+                print('Old buffer data has been processed and has been merged into the main results.')
 
             run_date_dict.update({dataset_id: last_run_date_key})
 
@@ -1703,7 +1706,6 @@ def update_results_s3(processing_code, data_dict, run_date_dict, remote, threads
             output = pool.map(update_result, results)
             pool.close()
             pool.join()
-
 
 
 def delete_result_objects_s3(conn_config, bucket, dataset_ids=None, keep_last=10):
