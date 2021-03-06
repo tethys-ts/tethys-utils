@@ -13,7 +13,8 @@ import orjson
 from time import sleep
 import traceback
 from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats
-from tethys_utils.main import nc_ts_key_pattern, assign_ds_ids, put_remote_dataset, create_geometry, assign_station_id, grp_ts_agg, read_pkl_zstd, data_to_xarray, process_station_summ, put_remote_station, email_msg, s3_connection, agg_stat_mapping, put_remote_agg_datasets, put_remote_agg_stations, list_parse_s3, get_remote_station, compare_datasets_from_s3, process_datasets, process_stations_df, process_stations_base, prepare_station_results, update_results_s3
+# from tethys_utils.main import nc_ts_key_pattern, assign_ds_ids, put_remote_dataset, create_geometry, assign_station_id, grp_ts_agg, read_pkl_zstd, data_to_xarray, process_station_summ, put_remote_station, email_msg, s3_connection, agg_stat_mapping, put_remote_agg_datasets, put_remote_agg_stations, list_parse_s3, get_remote_station, compare_datasets_from_s3, process_datasets, process_stations_df, process_stations_base, prepare_results, update_results_s3
+import tethys_utils as tu
 from tethys_utils.altitude_io import koordinates_raster_query, get_altitude
 import urllib3
 from tethysts.utils import key_patterns
@@ -296,16 +297,22 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
         hts = param['source']['hts']
 
         datasets = param['source']['datasets']
+        processing_code = param['source']['processing_code']
+
+        remote = param['remote']
 
         ### Initalize
-        run_date = pd.Timestamp.today(tz='utc').round('s')
-        # run_date_local = run_date.tz_convert(ts_local_tz).tz_localize(None).strftime('%Y-%m-%d %H:%M:%S')
-        run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
+        # run_date = pd.Timestamp.today(tz='utc').round('s')
+        # # run_date_local = run_date.tz_convert(ts_local_tz).tz_localize(None).strftime('%Y-%m-%d %H:%M:%S')
+        # run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
 
-        s3 = s3_connection(param['remote']['connection_config'])
+        s3 = tu.s3_connection(remote['connection_config'])
 
         ### Create dataset_ids
-        dataset_list = process_datasets(datasets)
+        dataset_list = tu.process_datasets(datasets)
+
+        run_date_dict = tu.process_run_date(processing_code, dataset_list, remote)
+        max_run_date_key = max(list(run_date_dict.values))
 
         for meas in datasets:
             print('----- Starting new dataset group -----')
@@ -320,7 +327,7 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
             stns2 = stns1[(stns1.lat > -47.5) & (stns1.lat < -34) & (stns1.lon > 166) & (stns1.lon < 179)].dropna().copy()
             stns2.rename(columns={'SiteName': 'ref'}, inplace=True)
 
-            stns2 = process_stations_df(stns2)
+            stns2 = tu.process_stations_df(stns2)
 
             ## Update sites with altitude
             print('-- Get altitude from Tethys stations if they exist else koordinates')
@@ -331,7 +338,7 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
             stns_list = stns2.drop(['lat', 'lon', 'station_id'], axis=1).to_dict('records')
 
             ## Final station processing
-            stns_dict = process_stations_base(stns_list)
+            stns_dict = tu.process_stations_base(stns_list)
 
             ### Get the Hilltop measurement types
             print('-- Running through station/measurement combos')
@@ -419,17 +426,17 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
                     ###########################################
                     ## Package up into the data_dict
                     if not ts_data1.empty:
-                        prepare_station_results(data_dict, datasets[meas], stn, ts_data1, run_date_key, mod_date)
+                        tu.prepare_results(data_dict, datasets[meas], stn, ts_data1, max_run_date_key, mod_date)
 
             ########################################
             ### Save results and stations
-            update_results_s3(data_dict, param['remote']['connection_config'], param['remote']['bucket'], threads=10, public_url=public_url)
+            tu.update_results_s3(processing_code, data_dict, run_date_dict, remote, threads=20, public_url=public_url)
 
 
     except Exception as err:
         # print(err)
         print(traceback.format_exc())
-        email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc(), param['remote']['email']['smtp_server'])
+        tu.email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc(), param['remote']['email']['smtp_server'])
 
     try:
 
@@ -437,18 +444,18 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
         print('Aggregate all stations for the dataset and all datasets in the bucket')
 
         for ds in dataset_list:
-            ds_new = put_remote_dataset(s3, param['remote']['bucket'], ds)
-            ds_stations = put_remote_agg_stations(s3, param['remote']['bucket'], ds['dataset_id'])
+            ds_new = tu.put_remote_dataset(s3, param['remote']['bucket'], ds)
+            ds_stations = tu.put_remote_agg_stations(s3, param['remote']['bucket'], ds['dataset_id'])
 
         ### Aggregate all datasets for the bucket
-        ds_all = put_remote_agg_datasets(s3, param['remote']['bucket'])
+        ds_all = tu.put_remote_agg_datasets(s3, param['remote']['bucket'])
 
         print('--Success!')
 
     except Exception as err:
         # print(err)
         print(traceback.format_exc())
-        email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc(), param['remote']['email']['smtp_server'])
+        tu.email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc(), param['remote']['email']['smtp_server'])
 
 
 
