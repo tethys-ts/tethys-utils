@@ -27,6 +27,7 @@ import urllib3
 from multiprocessing.pool import ThreadPool, Pool
 from tethysts.utils import key_patterns, get_object_s3
 from email.message import EmailMessage
+from datetime import date, datetime
 
 
 ####################################################
@@ -1398,40 +1399,110 @@ def process_buffer_threaded(obj_df, remote, run_date_key, threads=30):
     output = ThreadPool(threads).starmap(process_buffer, input_list)
 
 
-def process_buffer_last_run_date(ex_dataset_id, dataset_list, run_date, remote, days_prior=7):
-    """
+# def process_buffer_last_run_date(ex_dataset_id, dataset_list, run_date, remote, days_prior=7):
+#     """
 
+#     """
+#     run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
+
+#     s3 = s3_connection(remote['connection_config'])
+
+#     prefix = key_patterns['results'].split('{station_id}')[0].format(dataset_id=ex_dataset_id)
+#     obj_list = list_parse_s3(s3, remote['bucket'], prefix)
+
+#     if obj_list.empty:
+#         last_run_date = run_date
+#         last_run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
+#     else:
+#         last_run_date = obj_list['KeyDate'].max()
+#         last_run_date_key = last_run_date.strftime('%Y%m%dT%H%M%SZ')
+
+#     if last_run_date < (run_date - pd.DateOffset(days=days_prior)):
+#         obj_df2 = get_filtered_obj_list(remote, dataset_list)
+#         obj_df3 = get_last_results(obj_df2)
+#         obj_df4 = filter_old_ones(obj_df3, run_date, days_prior)
+#         process_buffer_threaded(obj_df4, remote, run_date_key)
+
+#         last_run_date = run_date
+#         last_run_date_key = run_date_key
+
+#         print('Old buffer data has been processed. A new result date has been created.')
+
+#     return last_run_date_key
+
+
+def process_run_date(processing_code, dataset_list, remote, run_date=None, days_prior=14):
     """
-    run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
+    Function to process the run date keys for all datasets for the extraction. These are specific to each processing_code.
+
+    Parameters
+    ----------
+    processing_code : int
+        The processing code to determine how the input data should be processed.
+    dataset_list : list of dict
+        The list of datasets, which is the output of the process_datasets function.
+    remote : dict
+        Dict of a connection_config and bucket:
+        conn_config : dict
+            A dictionary of the connection info necessary to establish an S3 connection.
+        bucket : str
+            The S3 bucket.
+    run_date : str, datetime, date, pd.Timestamp, or None
+        The run_date to use for processing. If None, then the run_date will be generated.
+    days_prior : int
+        If the buffer results file is to be checked, how many days should the buffer results file build up before it is reprocessed and combined with the main results file.
+
+    Returns
+    -------
+    run_date_dict : dict of str
+    """
+    if isinstance(run_date, (str, datetime, date, pd.Timestamp)):
+        run_date1 = pd.Timestamp(run_date)
+    else:
+        run_date1 = pd.Timestamp.today(tz='utc').tz_localize(None)
+
+    run_date_key = run_date1.strftime('%Y%m%dT%H%M%SZ')
 
     s3 = s3_connection(remote['connection_config'])
 
-    prefix = key_patterns['results'].split('{station_id}')[0].format(dataset_id=ex_dataset_id)
-    obj_list = list_parse_s3(s3, remote['bucket'], prefix)
+    run_date_dict = {}
+    for ds in dataset_list:
+        dataset_id = ds['dataset_id']
 
-    if obj_list.empty:
-        last_run_date = run_date
-        last_run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
-    else:
-        last_run_date = obj_list['KeyDate'].max()
-        last_run_date_key = last_run_date.strftime('%Y%m%dT%H%M%SZ')
+        if processing_code in [1, 2, 4, 5, 6]:
+            run_date_dict.update({dataset_id: run_date_key})
 
-    if last_run_date < (run_date - pd.DateOffset(days=days_prior)):
-        obj_df2 = get_filtered_obj_list(remote, dataset_list)
-        obj_df3 = get_last_results(obj_df2)
-        obj_df4 = filter_old_ones(obj_df3, run_date, days_prior)
-        process_buffer_threaded(obj_df4, remote, run_date_key)
+        elif processing_code in [3]:
+            prefix = key_patterns['results'].split('{station_id}')[0].format(dataset_id=dataset_id)
+            obj_list = list_parse_s3(s3, remote['bucket'], prefix)
 
-        last_run_date = run_date
-        last_run_date_key = run_date_key
+            if obj_list.empty:
+                last_run_date = run_date1
+                last_run_date_key = run_date1.strftime('%Y%m%dT%H%M%SZ')
+            else:
+                last_run_date = obj_list['KeyDate'].max()
+                last_run_date_key = last_run_date.strftime('%Y%m%dT%H%M%SZ')
 
-        print('Old buffer data has been processed. A new result date has been created.')
+            if last_run_date < (run_date1 - pd.DateOffset(days=days_prior)):
+                obj_df2 = get_filtered_obj_list(remote, dataset_list)
+                obj_df3 = get_last_results(obj_df2)
+                obj_df4 = filter_old_ones(obj_df3, run_date1, days_prior)
+                process_buffer_threaded(obj_df4, remote, run_date_key)
 
-    return last_run_date_key
+                last_run_date = run_date1
+                last_run_date_key = run_date_key
+
+                print('Old buffer data has been processed. A new result date has been created.')
+
+            run_date_dict.update({dataset_id: last_run_date_key})
+
+        else:
+            raise ValueError('processing_code does not exist.')
+
+    return run_date_dict
 
 
-
-def prepare_station_results(data_dict, dataset_list, station_dict, data_df, run_date_key, mod_date=None, sum_closed='right', other_closed='left', discrete=True):
+def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key, mod_date=None, sum_closed='right', other_closed='left', discrete=True):
     """
 
     """
@@ -1509,24 +1580,26 @@ def prepare_station_results(data_dict, dataset_list, station_dict, data_df, run_
         data_dict[ds_id].append(new1)
 
 
-def update_results_s3(data_dict, conn_config, bucket, threads=10, add_old=False, read_buffer=False, last_run_date_key=None, public_url=None, no_comparison=False):
+def update_results_s3(processing_code, data_dict, run_date_dict, remote, threads=20, public_url=None):
     """
     Parameters
     ----------
+    processing_code : int
+        The processing code to determine how the input data should be processed.
     data_dict : dict of lists
         A dictionary with the keys as the dataset_ids and teh values as lists of zstd compressed xr.Datasets.
-    conn_config : dict
-        A dictionary of the connection info necessary to establish an S3 connection.
-    bucket : str
-        The S3 bucket.
+    remote : dict
+        Dict of a connection_config and bucket:
+        conn_config : dict
+            A dictionary of the connection info necessary to establish an S3 connection.
+        bucket : str
+            The S3 bucket.
     threads : int
         The number of threads to use to process the data.
     add_old : bool
         Should the data in the S3 be added to the output? Ususally needed for writing to buffer with real-time data.
     read_buffer : bool
         Should the results buffer file be read instead of the normal results file?
-    last_run_date_key : str
-        Specify the last run key instead of having the function figure it out. The function will do a check to make sure that the key exists.
     public_url : str
         Optional if there is a public URL to the object instead of using the S3 API directly.
 
@@ -1535,10 +1608,36 @@ def update_results_s3(data_dict, conn_config, bucket, threads=10, add_old=False,
     None
 
     """
+    ### Parameters
+    conn_config = remote['connection_config']
+    bucket = remote['bucket']
+
+    if processing_code in [2, 3, 6]:
+        add_old = True
+    elif processing_code in [1, 4, 5]:
+        add_old = False
+    else:
+        raise ValueError('processing_code does not exist.')
+
+    if processing_code in [3]:
+        read_buffer = True
+    else:
+        read_buffer = False
+
+    if processing_code in [4, 5]:
+        no_comparison = True
+    else:
+        no_comparison = False
+
+    ### Run update
+
     s3 = s3_connection(conn_config, threads)
 
     for ds_id, results in data_dict.items():
         print('--dataset_id: ' + ds_id)
+
+        run_date_key = run_date_dict[ds_id]
+
 
         def update_result(result):
             """
@@ -1559,12 +1658,12 @@ def update_results_s3(data_dict, conn_config, bucket, threads=10, add_old=False,
             attrs = new1[parameter].attrs.copy()
 
             ds_id = attrs['dataset_id']
-            run_date_key = new1.attrs['history'].split(':')[0]
+            mod_date_key = new1.attrs['history'].split(':')[0]
 
             if no_comparison:
                 up1 = new1
             else:
-                up1 = compare_datasets_from_s3(conn_config, bucket, new1, add_old=add_old, read_buffer=read_buffer, last_run_date_key=last_run_date_key, public_url=public_url)
+                up1 = compare_datasets_from_s3(conn_config, bucket, new1, add_old=add_old, read_buffer=read_buffer, public_url=public_url)
 
             ## Save results
             if isinstance(up1, xr.Dataset) and (len(up1[parameter].time) > 0):
@@ -1580,15 +1679,15 @@ def update_results_s3(data_dict, conn_config, bucket, threads=10, add_old=False,
                 cctx = zstd.ZstdCompressor(level=1)
                 c_obj = cctx.compress(up1.to_netcdf())
 
-                s3.put_object(Body=c_obj, Bucket=bucket, Key=new_key, ContentType='application/zstd', Metadata={'run_date': run_date_key})
+                s3.put_object(Body=c_obj, Bucket=bucket, Key=new_key, ContentType='application/zstd', Metadata={'run_date': mod_date_key})
 
                 ## Process stn data
                 print('Save station data')
 
-                stn_m = process_station_summ(ds_id, stn_id, conn_config, bucket, mod_date=run_date_key, public_url=public_url)
+                stn_m = process_station_summ(ds_id, stn_id, conn_config, bucket, mod_date=mod_date_key, public_url=public_url)
 
                 stn4 = orjson.loads(stn_m.json(exclude_none=True))
-                up_stns = put_remote_station(s3, bucket, stn4, run_date=run_date_key)
+                up_stns = put_remote_station(s3, bucket, stn4, run_date=mod_date_key)
 
             else:
                 print('No new data to update')

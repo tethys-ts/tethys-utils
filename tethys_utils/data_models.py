@@ -96,6 +96,7 @@ class Dataset(BaseModel):
     wrf_standard_name: str = Field(None, description='The WRF standard name for the parameter.')
     precision: float = Field(None, description='The decimal precision of the result values.')
     description: str = Field(None, description='Dataset description.')
+    processing_code: int = Field(None, description='The processing code to determine how the input data should be processed.')
     properties: Dict = Field(None, description='Any additional dataset specific properties.')
     # station_object_key: S3ObjectKey
     modified_date: datetime = Field(None, description='The modification date of the last edit.')
