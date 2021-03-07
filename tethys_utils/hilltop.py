@@ -306,20 +306,15 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
         # # run_date_local = run_date.tz_convert(ts_local_tz).tz_localize(None).strftime('%Y-%m-%d %H:%M:%S')
         # run_date_key = run_date.strftime('%Y%m%dT%H%M%SZ')
 
-        s3 = tu.s3_connection(remote['connection_config'])
-
         ### Create dataset_ids
         dataset_list = tu.process_datasets(datasets)
 
         run_date_dict = tu.process_run_date(processing_code, dataset_list, remote)
-        max_run_date_key = max(list(run_date_dict.values))
+        max_run_date_key = max(list(run_date_dict.values()))
 
         for meas in datasets:
             print('----- Starting new dataset group -----')
             print(meas)
-
-            ## Create the data_dict
-            data_dict = {d['dataset_id']: [] for d in datasets[meas]}
 
             ### Pull out stations
             stns1 = ws.site_list(base_url, hts, location='LatLong') # There's a problem with Hilltop that requires running the site list without a measurement first...
@@ -364,6 +359,9 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
                     mtypes_df.loc[(mtypes_df.ref == i[0]) & (mtypes_df.Measurement == i[1]), 'corrections'] = True
 
             if not mtypes_df.empty:
+
+                ## Create the data_dict
+                data_dict = {d['dataset_id']: [] for d in datasets[meas]}
 
                 ##  Iterate through each stn
                 print('-- Iterate through each station')
@@ -426,11 +424,11 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
                     ###########################################
                     ## Package up into the data_dict
                     if not ts_data1.empty:
-                        tu.prepare_results(data_dict, datasets[meas], stn, ts_data1, max_run_date_key, mod_date)
+                        tu.prepare_results(data_dict, datasets[meas], stn, ts_data1, max_run_date_key, mod_date, other_closed='right')
 
-            ########################################
-            ### Save results and stations
-            tu.update_results_s3(processing_code, data_dict, run_date_dict, remote, threads=20, public_url=public_url)
+                ########################################
+                ### Save results and stations
+                tu.update_results_s3(processing_code, data_dict, run_date_dict, remote, threads=20, public_url=public_url)
 
 
     except Exception as err:
@@ -442,6 +440,8 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
 
         ### Aggregate all stations for the dataset
         print('Aggregate all stations for the dataset and all datasets in the bucket')
+
+        s3 = tu.s3_connection(remote['connection_config'], 30)
 
         for ds in dataset_list:
             ds_new = tu.put_remote_dataset(s3, param['remote']['bucket'], ds)
