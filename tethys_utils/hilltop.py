@@ -380,9 +380,9 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
                             sleep(1)
                             if row.Measurement == 'Abstraction Volume':
                                 if row['corrections']:
-                                    ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, from_date=str(row.From), to_date=str(row.To), agg_method='Total', agg_interval='1 day')[1:].reset_index()
+                                    ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, from_date=str(row.From), to_date=str(row.To), agg_method='Total', agg_interval='1 day')[1:]
                                 else:
-                                    ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, agg_method='Total', agg_interval='1 day')[1:].reset_index()
+                                    ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, agg_method='Total', agg_interval='1 day')[1:]
                             else:
                                 if row['corrections']:
                                     ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, from_date=str(row.From), to_date=str(row.To), quality_codes=quality_codes)
@@ -441,14 +441,14 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
         ### Aggregate all stations for the dataset
         print('Aggregate all stations for the dataset and all datasets in the bucket')
 
-        s3 = tu.s3_connection(remote['connection_config'], 30)
+        s3 = tu.s3_connection(remote['connection_config'], 50)
 
         for ds in dataset_list:
             ds_new = tu.put_remote_dataset(s3, param['remote']['bucket'], ds)
-            ds_stations = tu.put_remote_agg_stations(s3, param['remote']['bucket'], ds['dataset_id'])
+            ds_stations = tu.put_remote_agg_stations(s3, param['remote']['bucket'], ds['dataset_id'], 50)
 
         ### Aggregate all datasets for the bucket
-        ds_all = tu.put_remote_agg_datasets(s3, param['remote']['bucket'])
+        ds_all = tu.put_remote_agg_datasets(s3, param['remote']['bucket'], 50)
 
         print('--Success!')
 
