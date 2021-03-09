@@ -1505,7 +1505,7 @@ def process_run_date(processing_code, dataset_list, remote, run_date=None, days_
     return run_date_dict
 
 
-def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key, mod_date=None, sum_closed='right', other_closed='left', discrete=True):
+def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key, mod_date=None, sum_closed='right', other_closed='left', discrete=True, ts_local_tz=None):
     """
 
     """
@@ -1572,6 +1572,8 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
 
         ## Convert to xarray
         df4 = df3.copy()
+        if isinstance(ts_local_tz, str):
+            df4['time'] = df4['time'].dt.tz_localize(ts_local_tz).dt.tz_convert('utc').dt.tz_localize(None)
         df4.set_index(['time', 'height'], inplace=True)
 
         new1 = data_to_xarray(df4, station_dict, parameter, attrs1, encoding1, run_date=run_date_key, ancillary_variables=ancillary_variables, compression='zstd')

@@ -414,7 +414,7 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
                     ts_data1 = ts_data.reset_index().rename(columns={'DateTime': 'time', 'Value': parameter, 'QualityCode': 'quality_code'}).drop(['Site', 'Measurement'], axis=1)
                     ts_data1['height'] = 0
                     ts_data1[parameter] = pd.to_numeric(ts_data1[parameter], errors='ignore')
-                    ts_data1['time'] = ts_data1['time'].dt.tz_localize(ts_local_tz).dt.tz_convert('utc').dt.tz_localize(None)
+                    # ts_data1['time'] = ts_data1['time'].dt.tz_localize(ts_local_tz).dt.tz_convert('utc').dt.tz_localize(None)
 
                     ## Get the station data
                     stn = stns_dict[row['station_id']]
@@ -424,7 +424,7 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
                     ###########################################
                     ## Package up into the data_dict
                     if not ts_data1.empty:
-                        tu.prepare_results(data_dict, datasets[meas], stn, ts_data1, max_run_date_key, mod_date, other_closed='right')
+                        tu.prepare_results(data_dict, datasets[meas], stn, ts_data1, max_run_date_key, mod_date, other_closed='right', ts_local_tz=ts_local_tz)
 
                 ########################################
                 ### Save results and stations
