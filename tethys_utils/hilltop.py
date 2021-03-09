@@ -380,9 +380,9 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
                             sleep(1)
                             if row.Measurement == 'Abstraction Volume':
                                 if row['corrections']:
-                                    ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, from_date=str(row.From), to_date=str(row.To), agg_method='Total', agg_interval='1 day')[1:].reset_index()
+                                    ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, from_date=str(row.From), to_date=str(row.To), agg_method='Total', agg_interval='1 day')[1:]
                                 else:
-                                    ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, agg_method='Total', agg_interval='1 day')[1:].reset_index()
+                                    ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, agg_method='Total', agg_interval='1 day')[1:]
                             else:
                                 if row['corrections']:
                                     ts_data = ws.get_data(base_url, hts, row.ref, row.Measurement, from_date=str(row.From), to_date=str(row.To), quality_codes=quality_codes)
