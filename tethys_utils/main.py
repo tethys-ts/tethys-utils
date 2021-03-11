@@ -1509,7 +1509,7 @@ def process_run_date(processing_code, dataset_list, remote, run_date=None, days_
     return run_date_dict
 
 
-def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key, mod_date=None, sum_closed='right', other_closed='left', discrete=True, ts_local_tz=None):
+def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key, mod_date=None, sum_closed='right', other_closed='left', discrete=True, ts_local_tz=None, station_attrs=None, station_encoding=None):
     """
 
     """
@@ -1584,7 +1584,7 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
 
         ## Update the data_dict
         ds_id = ds_mapping['dataset_id']
-        stn_id = station_dict['station_id']
+        # stn_id = station_dict['station_id']
 
         data_dict[ds_id].append(new1)
 
