@@ -980,13 +980,17 @@ def get_new_stats(data):
     vars1 = list(data.variables)
     parameter = [v for v in vars1 if 'dataset_id' in data[v].attrs][0]
     precision = int(np.abs(np.log10(data[parameter].attrs['precision'])))
+    data1 = data[parameter]
 
-    min1 = round(float(data[parameter].min()), precision)
-    max1 = round(float(data[parameter].max()), precision)
+    min1 = round(float(data1.min()), precision)
+    max1 = round(float(data1.max()), precision)
+    mean1 = round(float(data1.mean()), precision)
+    median1 = round(float(data1.median()), precision)
+    count1 = int(data1.count())
     from_date = pd.Timestamp(data['time'].min().values).tz_localize(None)
     to_date = pd.Timestamp(data['time'].max().values).tz_localize(None)
 
-    stats1 = Stats(min=min1, max=max1, from_date=from_date, to_date=to_date)
+    stats1 = Stats(min=min1, max=max1, mean=mean1, median=median1, count=count1, from_date=from_date, to_date=to_date)
 
     return stats1
 

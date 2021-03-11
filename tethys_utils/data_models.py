@@ -20,6 +20,9 @@ class Stats(BaseModel):
     """
     min: float
     max: float
+    mean: float
+    median: float
+    count: int
     from_date: datetime
     to_date: datetime
 
