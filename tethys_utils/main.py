@@ -85,7 +85,7 @@ def s3_connection(conn_config, max_pool_connections=20):
     return s3
 
 
-def list_parse_s3(s3_client, bucket, prefix, start_after='', delimiter='', continuation_token=''):
+def list_objects_s3(s3_client, bucket, prefix, start_after='', delimiter='', continuation_token='', get_versions=False):
     """
     Wrapper S3 function around the list_objects_v2 base function with a Pandas DataFrame output.
 
@@ -123,7 +123,6 @@ def list_parse_s3(s3_client, bucket, prefix, start_after='', delimiter='', conti
                 break
 
     else:
-
         js = []
         while True:
             js1 = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix, StartAfter=start_after, Delimiter=delimiter, ContinuationToken=continuation_token)
@@ -150,6 +149,59 @@ def list_parse_s3(s3_client, bucket, prefix, start_after='', delimiter='', conti
         f_df1 = pd.DataFrame(columns=['Key', 'LastModified', 'ETag', 'Size', 'KeyDate'])
 
     return f_df1
+
+
+def list_object_versions_s3(s3_client, bucket, prefix, next_key='', delimiter=None):
+    """
+    Wrapper S3 function around the list_object_versions base function with a Pandas DataFrame output.
+
+    Parameters
+    ----------
+    s3_client : boto3.client
+        A boto3 client object
+    bucket : str
+        The S3 bucket.
+    prefix : str
+        Limits the response to keys that begin with the specified prefix.
+    next_key : str
+        The S3 key to start at.
+    delimiter : str or None
+        A delimiter is a character you use to group keys.
+
+    Returns
+    -------
+    DataFrame
+    """
+    js = []
+    while True:
+        if isinstance(delimiter, str):
+            js1 = s3_client.list_object_versions(Bucket=bucket, Prefix=prefix, KeyMarker=next_key, Delimiter=delimiter)
+        else:
+            js1 = s3_client.list_object_versions(Bucket=bucket, Prefix=prefix, KeyMarker=next_key)
+
+        if 'Versions' in js1:
+            js.extend(js1['Versions'])
+            if 'NextKeyMarker' in js1:
+                next_key = js1['NextKeyMarker']
+            else:
+                break
+        else:
+            break
+
+    if js:
+        f_df1 = pd.DataFrame(js)[['Key', 'VersionId', 'IsLatest', 'LastModified', 'ETag', 'Size']].copy()
+        try:
+            f_df1['KeyDate'] = pd.to_datetime(f_df1.Key.str.findall('\d\d\d\d\d\d\d\dT\d\d\d\d\d\dZ').apply(lambda x: x[0] if len(x) > 0 else np.nan), utc=True, errors='coerce').dt.tz_localize(None)
+        except:
+            # print('No dates to parse in Keys')
+            f_df1['KeyDate'] = None
+        f_df1['ETag'] = f_df1['ETag'].str.replace('"', '')
+        f_df1['LastModified'] = pd.to_datetime(f_df1['LastModified']).dt.tz_localize(None)
+    else:
+        f_df1 = pd.DataFrame(columns=['Key', 'LastModified', 'ETag', 'Size', 'KeyDate'])
+
+    return f_df1
+
 
 
 def get_last_date(s3_df, default_date='1900-01-01', date_type='date'):
@@ -999,7 +1051,7 @@ def process_object_keys(s3, bucket, prefix):
     """
 
     """
-    keys1 = list_parse_s3(s3, bucket, prefix)
+    keys1 = list_objects_s3(s3, bucket, prefix)
     keys2 = keys1[keys1.Key.str.contains('results')]
 
     infos1 = [S3ObjectKey(key=row['Key'], bucket=bucket, content_length=row['Size'], etag=row['ETag'], run_date=row['KeyDate'], modified_date=row['LastModified']) for i, row in keys2.iterrows()]
@@ -1203,7 +1255,7 @@ def put_remote_agg_stations(s3, bucket, dataset_id, threads=30):
 
     stn_prefix = agg_stn_key.split('stations.json.zst')[0].format(dataset_id=dataset_id)
 
-    list1 = list_parse_s3(s3, bucket, stn_prefix)
+    list1 = list_objects_s3(s3, bucket, stn_prefix)
     list2 = list1[list1.Key.str.contains('station.json.zst')].copy()
 
     # stn_list = [{'s3': s3, 'bucket': bucket, 'dataset_id': None, 'stn_key': k} for k in list2.Key]
@@ -1229,7 +1281,7 @@ def put_remote_agg_datasets(s3, bucket, threads=30):
 
     ds_prefix = agg_ds_key.split('datasets.json.zst')[0]
 
-    list1 = list_parse_s3(s3, bucket, ds_prefix)
+    list1 = list_objects_s3(s3, bucket, ds_prefix)
     list2 = list1[list1.Key.str.contains('dataset.json.zst')].copy()
 
     # ds_list = [{'s3': s3, 'bucket': bucket, 'dataset_id': None, 'ds_key': k} for k in list2.Key]
@@ -1297,7 +1349,7 @@ def compare_datasets_from_s3(conn_config, bucket, new_data, add_old=False, read_
             last_key1 = pd.DataFrame()
     else:
         prefix_key = key_patterns['results'].split('{run_date}')[0].format(**key_dict)
-        all_keys = list_parse_s3(s3, bucket, prefix_key)
+        all_keys = list_objects_s3(s3, bucket, prefix_key)
         last_key1 = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()]
 
     ## Get previous data and compare
@@ -1327,7 +1379,7 @@ def get_filtered_obj_list(remote, dataset_list):
     dataset_ids = [d['dataset_id'] for d in dataset_list]
 
     s3 = s3_connection(remote['connection_config'])
-    obj_df = list_parse_s3(s3, remote['bucket'], base_prefix)
+    obj_df = list_objects_s3(s3, remote['bucket'], base_prefix)
 
     obj_df1 = obj_df[obj_df['KeyDate'].notnull()].copy()
     obj_df1['dataset_id'] = obj_df1['Key'].apply(lambda x: x.split('/')[2])
@@ -1478,7 +1530,7 @@ def process_run_date(processing_code, dataset_list, remote, run_date=None, days_
 
         elif processing_code in [3]:
             prefix = key_patterns['results'].split('{station_id}')[0].format(dataset_id=dataset_id)
-            obj_list = list_parse_s3(s3, remote['bucket'], prefix)
+            obj_list = list_objects_s3(s3, remote['bucket'], prefix)
 
             if obj_list.empty:
                 last_run_date = run_date1
@@ -1714,27 +1766,36 @@ def update_results_s3(processing_code, data_dict, run_date_dict, remote, threads
             pool.join()
 
 
-def delete_result_objects_s3(conn_config, bucket, dataset_ids=None, keep_last=10):
+def delete_result_objects_s3(conn_config, bucket, dataset_ids=None, keep_last=10, threads=50):
     """
+    Function to delete Tethys result objects including all object versions.
+
     Parameters
     ----------
     conn_config : dict
         A dictionary of the connection info necessary to establish an S3 connection.
     bucket : str
-
-    dataset_ids : list or str
+        The s3 bucket.
+    dataset_ids : list, str, or None
         The specific datasets that should have the results objects removed. None will remove results objects from all datasets in the bucket.
     keep_last : int
         That last number of runs that should be kept. E.g. a value of 4 will kepp the last 4 runs and remove all prior runs.
+    threads : int
+        The number of concurrent threads to use when aggregating the stations and datasets.
+
+    Returns
+    -------
+    list of keys deleted
     """
-    s3 = s3_connection(conn_config)
+    s3 = s3_connection(conn_config, threads)
 
     if isinstance(dataset_ids, str):
         dataset_ids = [dataset_ids]
 
     prefix = key_patterns['results'].split('{dataset_id}')[0]
 
-    obj_list = list_parse_s3(s3, bucket, prefix)
+    obj_list = list_object_versions_s3(s3, bucket, prefix)
+
     obj_list1 = obj_list[obj_list.KeyDate.notnull()].copy()
     key_split = obj_list1['Key'].str.split('/')
     obj_list1['dataset_id'] = key_split.apply(lambda x: x[2])
@@ -1749,7 +1810,8 @@ def delete_result_objects_s3(conn_config, bucket, dataset_ids=None, keep_last=10
     rem_keys = []
     for i, row in obj_list2:
         rem1 = row.sort_values('KeyDate', ascending=False).iloc[keep_last:]
-        rem_keys.extend(rem1['Key'].tolist())
+        for i2, row2 in rem1.iterrows():
+            rem_keys.extend([{'Key': row2['Key'], 'VersionId': row2['VersionId']}])
 
     if len(rem_keys) > 0:
         ## Split them into 1000 key chunks
@@ -1757,8 +1819,7 @@ def delete_result_objects_s3(conn_config, bucket, dataset_ids=None, keep_last=10
 
         ## Run through and delete the objects...
         for keys in rem_keys_chunks:
-            del_list = [{'Key': k} for k in keys]
-            resp = s3.delete_objects(Bucket=bucket, Delete={'Objects': del_list})
+            resp = s3.delete_objects(Bucket=bucket, Delete={'Objects': keys.tolist(), 'Quiet': True})
 
     print(str(len(rem_keys)) + ' objects removed')
     print('Updating stations and dataset json files...')
@@ -1766,10 +1827,10 @@ def delete_result_objects_s3(conn_config, bucket, dataset_ids=None, keep_last=10
     dataset_list = obj_list1['dataset_id'].unique().tolist()
 
     for ds in dataset_list:
-        ds_stations = put_remote_agg_stations(s3, bucket, ds)
+        ds_stations = put_remote_agg_stations(s3, bucket, ds, threads)
 
     ### Aggregate all datasets for the bucket
-    ds_all = put_remote_agg_datasets(s3, bucket)
+    ds_all = put_remote_agg_datasets(s3, bucket, threads)
 
     return rem_keys
 
