@@ -1138,7 +1138,7 @@ def get_station_data_from_xr(data):
     return stn_data1
 
 
-def process_station_summ(dataset_id, station_id, data, connection_config, bucket, mod_date=None):
+def process_station_summ(dataset_id, station_id, data, object_infos, mod_date=None):
     """
 
     """
@@ -1148,10 +1148,10 @@ def process_station_summ(dataset_id, station_id, data, connection_config, bucket
         mod_date = pd.Timestamp(mod_date).tz_localize(None)
 
     ## Determine the latest result
-    s3 = s3_connection(connection_config)
-    prefix = key_patterns['results'].split('{run_date}')[0].format(dataset_id=dataset_id, station_id=station_id)
+    # s3 = s3_connection(connection_config)
+    # prefix = key_patterns['results'].split('{run_date}')[0].format(dataset_id=dataset_id, station_id=station_id)
 
-    object_infos1 = process_object_keys(s3, bucket, prefix)
+    # object_infos1 = process_object_keys(s3, bucket, prefix)
     # obj_list = [s.dict() for s in object_infos1 if s.dict()['key'].find('results') > 0]
     # obj_keys_df = pd.DataFrame(obj_list)
     # last_run_date = obj_keys_df['run_date'].max()
@@ -1175,13 +1175,16 @@ def process_station_summ(dataset_id, station_id, data, connection_config, bucket
     # xr2 = xr.concat(data_list, dim='time', data_vars='minimal')
     # data = xr2.sel(time=~xr2.get_index('time').duplicated('last'))
 
+    ## Get the keys info list
+    # object_infos1 = info_dict[station_id]
+
     ## Generate the info for the recently created data
     station_id = str(data['station_id'].values)
     stats1 = get_new_stats(data)
 
     ## Put it all together
     stn_dict2 = get_station_data_from_xr(data)
-    stn_dict2.update({'dataset_id': dataset_id, 'stats': stats1, 'results_object_key': object_infos1, 'modified_date': mod_date})
+    stn_dict2.update({'dataset_id': dataset_id, 'stats': stats1, 'results_object_key': object_infos, 'modified_date': mod_date})
 
     station_m = Station(**stn_dict2)
 
@@ -1337,27 +1340,29 @@ def compare_datasets_from_s3(conn_config, bucket, new_data, add_old=False, read_
         base_key_pattern = key_patterns['results']
 
     ## Get list of keys
-    s3 = s3_connection(conn_config)
+    # s3 = s3_connection(conn_config)
 
     if isinstance(last_run_date_key, str):
         key_dict.update({'run_date': last_run_date_key})
         last_key = base_key_pattern.format(**key_dict)
-        try:
-            last_info1 = s3.head_object(Bucket=bucket, Key=last_key)
-            last_key1 = pd.DataFrame({'Key': [last_key]})
-        except:
-            last_key1 = pd.DataFrame()
+        # last_key1 = pd.DataFrame({'Key': [last_key]})
+        # try:
+        #     last_info1 = s3.head_object(Bucket=bucket, Key=last_key)
+        #     last_key1 = pd.DataFrame({'Key': [last_key]})
+        # except:
+        #     last_key1 = pd.DataFrame()
     else:
-        prefix_key = key_patterns['results'].split('{run_date}')[0].format(**key_dict)
-        all_keys = list_objects_s3(s3, bucket, prefix_key)
-        last_key1 = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()]
+        last_key = None
+        # prefix_key = key_patterns['results'].split('{run_date}')[0].format(**key_dict)
+        # all_keys = list_objects_s3(s3, bucket, prefix_key)
+        # last_key1 = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()]
 
     ## Get previous data and compare
     if isinstance(public_url, str):
         conn_config = public_url
 
-    if not last_key1.empty:
-        last_key = last_key1.iloc[0]['Key']
+    if isinstance(last_key, str):
+        # last_key = last_key1.iloc[0]['Key']
         p_old_one = get_object_s3(last_key, conn_config, bucket, 'zstd')
         xr_old_one = xr.load_dataset(p_old_one)
         xr_old_one['time'] = xr_old_one['time'].dt.round('s')
@@ -1703,6 +1708,16 @@ def update_results_s3(processing_code, data_dict, run_date_dict, remote, threads
 
         run_date_key = run_date_dict[ds_id]
 
+        # Create the Key info dict
+        prefix = key_patterns['results'].split('{station_id}')[0].format(dataset_id=ds_id)
+
+        keys1 = list_objects_s3(s3, bucket, prefix)
+        obj_df1 = keys1[keys1.Key.str.contains('results.nc')].copy()
+        # obj_df1['dataset_id'] = obj_df1['Key'].apply(lambda x: x.split('/')[2])
+        obj_df1['station_id'] = obj_df1['Key'].apply(lambda x: x.split('/')[3])
+
+        last_date1 = obj_df1.groupby(['station_id'])['KeyDate'].last().reset_index()
+
 
         def update_result(result):
             """
@@ -1728,12 +1743,18 @@ def update_results_s3(processing_code, data_dict, run_date_dict, remote, threads
             if no_comparison:
                 up1 = new1
             else:
-                up1 = compare_datasets_from_s3(conn_config, bucket, new1, add_old=add_old, read_buffer=False, public_url=public_url)
+                last_date_key_df = last_date1[last_date1['station_id'] == stn_id]
+                if last_date_key_df.empty:
+                    last_date_key = None
+                else:
+                    last_date_key = make_run_date_key(last_date_key_df['KeyDate'].iloc[0])
+
+                up1 = compare_datasets_from_s3(conn_config, bucket, new1, add_old=add_old, read_buffer=False, last_run_date_key=last_date_key, public_url=public_url)
 
             ## Save results
             if isinstance(up1, xr.Dataset) and (len(up1[parameter].time) > 0):
 
-                print('Save results')
+                # print('Save results')
                 key_dict = {'dataset_id': ds_id, 'station_id': stn_id, 'run_date': run_date_key}
 
                 # if read_buffer:
@@ -1745,12 +1766,25 @@ def update_results_s3(processing_code, data_dict, run_date_dict, remote, threads
                 cctx = zstd.ZstdCompressor(level=1)
                 c_obj = cctx.compress(up1.to_netcdf())
 
-                s3.put_object(Body=c_obj, Bucket=bucket, Key=new_key, ContentType='application/zstd', Metadata={'run_date': mod_date_key})
+                obj_resp = s3.put_object(Body=c_obj, Bucket=bucket, Key=new_key, ContentType='application/zstd', Metadata={'run_date': mod_date_key})
 
                 ## Process stn data
-                print('Save station data')
+                # print('Save station data')
 
-                stn_m = process_station_summ(ds_id, stn_id, up1, conn_config, bucket, mod_date=mod_date_key)
+                ## Process object key infos
+                stn_obj_df1 = obj_df1[obj_df1['station_id'] == stn_id].drop(['LastModified', 'station_id'], axis=1).copy()
+                keys = stn_obj_df1['Key'].unique()
+                new_key_info = [new_key, obj_resp['ResponseMetadata']['HTTPHeaders']['etag'].replace('"', ''), len(c_obj), pd.Timestamp(run_date_key).tz_localize(None)]
+
+                if new_key in keys:
+                    stn_obj_df1[stn_obj_df1['Key'] == new_key] = new_key_info
+                else:
+                    stn_obj_df1.loc[len(stn_obj_df1)] = new_key_info
+
+                info1 = [S3ObjectKey(key=row['Key'], bucket=bucket, content_length=row['Size'], etag=row['ETag'], run_date=row['KeyDate']) for i, row in stn_obj_df1.iterrows()]
+
+                ## Final station processing and saving
+                stn_m = process_station_summ(ds_id, stn_id, up1, info1, mod_date=mod_date_key)
 
                 stn4 = orjson.loads(stn_m.json(exclude_none=True))
                 up_stns = put_remote_station(s3, bucket, stn4, run_date=mod_date_key)
