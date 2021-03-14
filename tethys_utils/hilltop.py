@@ -283,7 +283,7 @@ def convert_site_names(names, rem_m=True):
 
 
 
-def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, quality_codes=True, public_url=None):
+def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, quality_codes=True, public_url=None, save_interval_hours=336):
     """
 
     """
@@ -309,7 +309,7 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
         ### Create dataset_ids
         dataset_list = tu.process_datasets(datasets)
 
-        run_date_dict = tu.process_run_date(processing_code, dataset_list, remote)
+        run_date_dict = tu.process_run_date(processing_code, dataset_list, remote, save_interval_hours=save_interval_hours)
         max_run_date_key = max(list(run_date_dict.values()))
 
         for meas in datasets:
@@ -428,7 +428,7 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
 
                 ########################################
                 ### Save results and stations
-                tu.update_results_s3(processing_code, data_dict, run_date_dict, remote, threads=20, public_url=public_url)
+                tu.update_results_s3(processing_code, data_dict, run_date_dict, remote, threads=30, public_url=public_url)
 
 
     except Exception as err:
