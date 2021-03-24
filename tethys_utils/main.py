@@ -15,7 +15,7 @@ import botocore
 import smtplib
 import ssl
 import requests
-from pandas.core.groupby import SeriesGroupBy, GroupBy
+# from pandas.core.groupby import SeriesGroupBy, GroupBy
 import orjson
 from time import sleep
 import traceback
@@ -25,7 +25,7 @@ from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey
 from geojson import Point
 import urllib3
 from multiprocessing.pool import ThreadPool, Pool
-from tethysts.utils import key_patterns, get_object_s3
+from tethysts.utils import key_patterns, get_object_s3, s3_connection, read_json_zstd, read_pkl_zstd
 from email.message import EmailMessage
 from datetime import date, datetime
 
@@ -50,39 +50,6 @@ agg_stat_mapping = {'mean': 'mean', 'cumulative': 'sum', 'continuous': None, 'ma
 
 #####################################################
 ### Functions
-
-
-def s3_connection(conn_config, max_pool_connections=20):
-    """
-    Function to establish a connection with an S3 account. This can use the legacy connect (signature_version s3) and the curent version.
-
-    Parameters
-    ----------
-    conn_config : dict
-        A dictionary of the connection info necessary to establish an S3 connection.
-    max_pool_connections : int
-        The number of simultaneous connections for the S3 connection.
-
-    Returns
-    -------
-    S3 client object
-    """
-    s3_config = copy.deepcopy(conn_config)
-
-    if 'config' in s3_config:
-        config0 = s3_config.pop('config')
-        config0.update({'max_pool_connections': max_pool_connections})
-        config1 = boto3.session.Config(**config0)
-
-        s3_config1 = s3_config.copy()
-        s3_config1.update({'config': config1})
-
-        s3 = boto3.client(**s3_config1)
-    else:
-        s3_config.update({'config': botocore.config.Config(max_pool_connections=max_pool_connections)})
-        s3 = boto3.client(**s3_config)
-
-    return s3
 
 
 def list_objects_s3(s3_client, bucket, prefix, start_after='', delimiter='', continuation_token='', get_versions=False):
@@ -203,20 +170,19 @@ def list_object_versions_s3(s3_client, bucket, prefix, next_key='', delimiter=No
     return f_df1
 
 
+# def get_last_date(s3_df, default_date='1900-01-01', date_type='date'):
+#     """
 
-def get_last_date(s3_df, default_date='1900-01-01', date_type='date'):
-    """
+#     """
+#     if not s3_df.empty:
+#         last_run_date = s3_df['KeyDate'].max()
+#     else:
+#         last_run_date = pd.Timestamp(default_date)
 
-    """
-    if not s3_df.empty:
-        last_run_date = s3_df['KeyDate'].max()
-    else:
-        last_run_date = pd.Timestamp(default_date)
+#     if date_type == 'str':
+#         last_run_date = last_run_date.strftime('%Y-%m-%d %H:%M:%S')
 
-    if date_type == 'str':
-        last_run_date = last_run_date.strftime('%Y-%m-%d %H:%M:%S')
-
-    return last_run_date
+#     return last_run_date
 
 
 def make_run_date_key(run_date=None):
@@ -259,26 +225,6 @@ def write_json_zstd(data, compress_level=1):
     return c_obj
 
 
-def read_json_zstd(obj):
-    """
-    Deserializer from a compressed zstandard json object to a dictionary.
-
-    Parameters
-    ----------
-    obj : bytes
-        The bytes object.
-
-    Returns
-    -------
-    Dict
-    """
-    dctx = zstd.ZstdDecompressor()
-    obj1 = dctx.decompress(obj)
-    dict1 = orjson.loads(obj1)
-
-    return dict1
-
-
 def write_pkl_zstd(obj, file_path=None, compress_level=1, pkl_protocol=pickle.HIGHEST_PROTOCOL):
     """
     Serializer using pickle and zstandard. Converts any object that can be pickled to a binary object then compresses it using zstandard. Optionally saves the object to disk. If obj is bytes, then it will only be compressed without pickling.
@@ -311,45 +257,15 @@ def write_pkl_zstd(obj, file_path=None, compress_level=1, pkl_protocol=pickle.HI
         return c_obj
 
 
-def read_pkl_zstd(obj, unpickle=True):
-    """
-    Deserializer from a pickled object compressed with zstandard.
+# def put_result_object_s3(s3, bucket, obj, dataset_id, station_id, run_date=None, content_type='application/zstd'):
+#     """
 
-    Parameters
-    ----------
-    obj : bytes or str
-        Either a bytes object that has been pickled and compressed or a str path to the file object.
-    unpickle : bool
-        Should the bytes object be unpickled or left as bytes?
+#     """
+#     run_date_key = make_run_date_key(run_date)
+#     ts_key = key_patterns['results'].format(dataset_id=dataset_id, station_id=station_id, run_date=run_date_key)
+#     s3.put_object(Body=obj, Bucket=bucket, Key=ts_key, ContentType=content_type, Metadata={'run_date': run_date_key})
 
-    Returns
-    -------
-    Python object
-    """
-    dctx = zstd.ZstdDecompressor()
-    if isinstance(obj, str):
-        with open(obj, 'rb') as p:
-            obj1 = dctx.decompress(p.read())
-    elif isinstance(obj, bytes):
-        obj1 = dctx.decompress(obj)
-    else:
-        raise TypeError('obj must either be a str path or a bytes object')
-
-    if unpickle:
-        obj1 = pickle.loads(obj1)
-
-    return obj1
-
-
-def put_result_object_s3(s3, bucket, obj, dataset_id, station_id, run_date=None, content_type='application/zstd'):
-    """
-
-    """
-    run_date_key = make_run_date_key(run_date)
-    ts_key = key_patterns['results'].format(dataset_id=dataset_id, station_id=station_id, run_date=run_date_key)
-    s3.put_object(Body=obj, Bucket=bucket, Key=ts_key, ContentType=content_type, Metadata={'run_date': run_date_key})
-
-    return ts_key
+#     return ts_key
 
 
 def results_data_integrety_checks(data, param_name, attrs, encoding, ancillary_variables=None):
@@ -894,6 +810,7 @@ def tsreg(ts, freq=None, interp=False):
 #         raise ValueError('df should be either a Series or DataFrame.')
 #     return fun1
 
+
 def assign_ds_ids(datasets):
     """
     Parameters
@@ -1376,88 +1293,88 @@ def compare_datasets_from_s3(conn_config, bucket, new_data, add_old=False, read_
 
 
 
-def get_filtered_obj_list(remote, dataset_list):
-    """
+# def get_filtered_obj_list(remote, dataset_list):
+#     """
 
-    """
-    base_prefix = key_patterns['results'].split('{dataset_id}')[0]
-    dataset_ids = [d['dataset_id'] for d in dataset_list]
+#     """
+#     base_prefix = key_patterns['results'].split('{dataset_id}')[0]
+#     dataset_ids = [d['dataset_id'] for d in dataset_list]
 
-    s3 = s3_connection(remote['connection_config'])
-    obj_df = list_objects_s3(s3, remote['bucket'], base_prefix)
+#     s3 = s3_connection(remote['connection_config'])
+#     obj_df = list_objects_s3(s3, remote['bucket'], base_prefix)
 
-    obj_df1 = obj_df[obj_df['KeyDate'].notnull()].copy()
-    obj_df1['dataset_id'] = obj_df1['Key'].apply(lambda x: x.split('/')[2])
-    obj_df1['station_id'] = obj_df1['Key'].apply(lambda x: x.split('/')[3])
-    obj_df1['result_type'] = 'results'
-    obj_df1.loc[obj_df1['Key'].str.contains('buffer'), 'result_type'] = 'buffer'
+#     obj_df1 = obj_df[obj_df['KeyDate'].notnull()].copy()
+#     obj_df1['dataset_id'] = obj_df1['Key'].apply(lambda x: x.split('/')[2])
+#     obj_df1['station_id'] = obj_df1['Key'].apply(lambda x: x.split('/')[3])
+#     obj_df1['result_type'] = 'results'
+#     obj_df1.loc[obj_df1['Key'].str.contains('buffer'), 'result_type'] = 'buffer'
 
-    obj_df2 = obj_df1[obj_df1['dataset_id'].isin(dataset_ids)].copy()
+#     obj_df2 = obj_df1[obj_df1['dataset_id'].isin(dataset_ids)].copy()
 
-    return obj_df2
-
-
-def get_last_results(obj_df):
-    """
-
-    """
-    last_date1 = obj_df.groupby(['dataset_id', 'station_id'])['KeyDate'].last().reset_index()
-    obj_df1 = pd.merge(last_date1, obj_df[['Key', 'dataset_id', 'station_id', 'KeyDate', 'result_type']], on=['dataset_id', 'station_id', 'KeyDate'])
-
-    return obj_df1
+#     return obj_df2
 
 
-def filter_old_ones(obj_df, run_date, days_prior):
-    """
+# def get_last_results(obj_df):
+#     """
 
-    """
-    if isinstance(run_date.tzname(), str):
-        run_date1 = run_date.tz_convert('UTC').tz_localize(None)
-    else:
-        run_date1 = run_date
+#     """
+#     last_date1 = obj_df.groupby(['dataset_id', 'station_id'])['KeyDate'].last().reset_index()
+#     obj_df1 = pd.merge(last_date1, obj_df[['Key', 'dataset_id', 'station_id', 'KeyDate', 'result_type']], on=['dataset_id', 'station_id', 'KeyDate'])
 
-    old_date = run_date1 - pd.DateOffset(days=days_prior)
-
-    obj_df1 = obj_df[obj_df['KeyDate'] < old_date].copy()
-
-    return obj_df1
+#     return obj_df1
 
 
-def process_buffer(row, remote, run_date_key):
-    """
+# def filter_old_ones(obj_df, run_date, days_prior):
+#     """
 
-    """
-    data_list = []
-    for i, r in row.iterrows():
-        obj1 = get_object_s3(r['Key'], remote['connection_config'], remote['bucket'], 'zstd')
-        b1 = io.BytesIO(obj1)
-        xr1 = xr.load_dataset(b1)
-        data_list.append(xr1)
+#     """
+#     if isinstance(run_date.tzname(), str):
+#         run_date1 = run_date.tz_convert('UTC').tz_localize(None)
+#     else:
+#         run_date1 = run_date
 
-    xr2 = xr.concat(data_list, dim='time', data_vars='minimal')
-    xr3 = xr2.sel(time=~xr2.get_index('time').duplicated('last'))
-    xr3.attrs.update({'history': run_date_key + ': Generated'})
+#     old_date = run_date1 - pd.DateOffset(days=days_prior)
 
-    key_dict = {'dataset_id': r['dataset_id'], 'station_id': r['station_id'], 'run_date': run_date_key}
-    new_key = key_patterns['results'].format(**key_dict)
+#     obj_df1 = obj_df[obj_df['KeyDate'] < old_date].copy()
 
-    cctx = zstd.ZstdCompressor(level=1)
-    c_obj = cctx.compress(xr3.to_netcdf())
-
-    s3 = s3_connection(remote['connection_config'])
-
-    s3.put_object(Body=c_obj, Bucket=remote['bucket'], Key=new_key, ContentType='application/zstd', Metadata={'run_date': run_date_key})
+#     return obj_df1
 
 
-def process_buffer_threaded(obj_df, remote, run_date_key, threads=30):
-    """
+# def process_buffer(row, remote, run_date_key):
+#     """
 
-    """
-    grp1 = obj_df.groupby(['dataset_id', 'station_id'])
+#     """
+#     data_list = []
+#     for i, r in row.iterrows():
+#         obj1 = get_object_s3(r['Key'], remote['connection_config'], remote['bucket'], 'zstd')
+#         b1 = io.BytesIO(obj1)
+#         xr1 = xr.load_dataset(b1)
+#         data_list.append(xr1)
 
-    input_list = [[row, remote, run_date_key] for i, row in grp1]
+#     xr2 = xr.concat(data_list, dim='time', data_vars='minimal')
+#     xr3 = xr2.sel(time=~xr2.get_index('time').duplicated('last'))
+#     xr3.attrs.update({'history': run_date_key + ': Generated'})
 
-    output = ThreadPool(threads).starmap(process_buffer, input_list)
+#     key_dict = {'dataset_id': r['dataset_id'], 'station_id': r['station_id'], 'run_date': run_date_key}
+#     new_key = key_patterns['results'].format(**key_dict)
+
+#     cctx = zstd.ZstdCompressor(level=1)
+#     c_obj = cctx.compress(xr3.to_netcdf())
+
+#     s3 = s3_connection(remote['connection_config'])
+
+#     s3.put_object(Body=c_obj, Bucket=remote['bucket'], Key=new_key, ContentType='application/zstd', Metadata={'run_date': run_date_key})
+
+
+# def process_buffer_threaded(obj_df, remote, run_date_key, threads=30):
+#     """
+
+#     """
+#     grp1 = obj_df.groupby(['dataset_id', 'station_id'])
+
+#     input_list = [[row, remote, run_date_key] for i, row in grp1]
+
+#     output = ThreadPool(threads).starmap(process_buffer, input_list)
 
 
 # def process_buffer_last_run_date(ex_dataset_id, dataset_list, run_date, remote, days_prior=7):
@@ -1555,19 +1472,19 @@ def process_run_date(processing_code, dataset_list, remote, run_date=None, save_
     return run_date_dict
 
 
-def process_buffer_results(remote, dataset_list):
-    """
-    Legacy function for processing buffer files into normal results files.
-    """
-    run_date1 = pd.Timestamp.today(tz='utc').tz_localize(None)
+# def process_buffer_results(remote, dataset_list):
+#     """
+#     Legacy function for processing buffer files into normal results files.
+#     """
+#     run_date1 = pd.Timestamp.today(tz='utc').tz_localize(None)
 
-    obj_df2 = get_filtered_obj_list(remote, dataset_list)
-    obj_df3 = get_last_results(obj_df2)
-    obj_df4 = filter_old_ones(obj_df3, run_date1, 1)
+#     obj_df2 = get_filtered_obj_list(remote, dataset_list)
+#     obj_df3 = get_last_results(obj_df2)
+#     obj_df4 = filter_old_ones(obj_df3, run_date1, 1)
 
-    last_run_date_key = run_date1.strftime('%Y%m%dT%H%M%SZ')
+#     last_run_date_key = run_date1.strftime('%Y%m%dT%H%M%SZ')
 
-    process_buffer_threaded(obj_df4, remote, last_run_date_key)
+#     process_buffer_threaded(obj_df4, remote, last_run_date_key)
 
 
 def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key, mod_date=None, sum_closed='right', other_closed='left', discrete=True, ts_local_tz=None, station_attrs=None, station_encoding=None):
@@ -1666,10 +1583,6 @@ def update_results_s3(processing_code, data_dict, run_date_dict, remote, threads
             The S3 bucket.
     threads : int
         The number of threads to use to process the data.
-    add_old : bool
-        Should the data in the S3 be added to the output? Ususally needed for writing to buffer with real-time data.
-    read_buffer : bool
-        Should the results buffer file be read instead of the normal results file?
     public_url : str
         Optional if there is a public URL to the object instead of using the S3 API directly.
 
