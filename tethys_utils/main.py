@@ -319,21 +319,31 @@ def results_data_integrety_checks(data, param_name, attrs, encoding, ancillary_v
     return data
 
 
-# def station_data_integrety_checks(data, attrs=None, encoding=None):
-#     """
+def station_data_integrety_checks(data, attrs=None, encoding=None):
+    """
 
-#     """
-#     # Station data
-#     essentials = {'lat': (float, np.float), 'lon': (float, np.float), 'station_id': str, 'altitude': (int, float, np.float, np.int)}
+    """
+    # Station data
+    ignore_keys = ['station_id', 'lat', 'lon', 'name', 'altitude', 'ref', 'virtual_station', 'geometry']
+    other_keys = [s for s in data if s not in ignore_keys]
 
-#     for c in essentials:
-#         if not c in data.keys():
-#             raise ValueError('The station_data DataFrame must contain the field: ' + str(c))
+    if other_keys:
 
-#         if not isinstance(data[c], essentials[c]):
-#             raise ValueError('The station_data DataFrame field must have the data type(s): ' + str(essentials[c]))
+        if isinstance(attrs, dict):
+            for col in other_keys:
+                if not col in attrs:
+                    raise ValueError(col + ' must be in the attrs dict')
+        else:
+            raise TypeError('attrs must be a dict')
 
-#     return data
+        if isinstance(encoding, dict):
+            for col in other_keys:
+                if not col in encoding:
+                    raise ValueError(col + ' must be in the encoding dict')
+        else:
+            raise TypeError('encoding must be a dict')
+
+    return data
 
 
 def data_to_xarray(results_data, station_data, param_name, results_attrs, results_encoding, station_attrs=None, station_encoding=None, virtual_station=False, run_date=None, ancillary_variables=None, compression=False, compress_level=1):
@@ -363,26 +373,33 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
     Xarray Dataset or bytes object
 
     """
+    ## Station data prep
+    stn_m = StationBase(**station_data)
+    stn_data = orjson.loads(stn_m.json(exclude_none=True))
+    stn_data['lon'] = stn_data['geometry']['coordinates'][0]
+    stn_data['lat'] = stn_data['geometry']['coordinates'][1]
+    stn_data.pop('geometry')
+    if 'properties' in stn_data:
+        props = stn_data['properties'].copy()
+        for k, v in props.items():
+            stn_data[k] = v
+        stn_data.pop('properties')
+
     ## Integrity Checks
 
     # Time series data
     ts_data1 = results_data_integrety_checks(results_data, param_name, results_attrs, results_encoding, ancillary_variables)
 
     # Station data
-    stn_m = StationBase(**station_data)
-    stn_data = orjson.loads(stn_m.json(exclude_none=True))
-    stn_data['lon'] = stn_data['geometry']['coordinates'][0]
-    stn_data['lat'] = stn_data['geometry']['coordinates'][1]
-    stn_data.pop('geometry')
+    stn_data = station_data_integrety_checks(stn_data, attrs=station_attrs, encoding=station_encoding)
 
     ## Assign Attributes
-
     if isinstance(station_attrs, dict):
         attrs1 = copy.deepcopy(station_attrs)
     else:
         attrs1 = {}
 
-    attrs1.update({'station_id': {'cf_role': "timeseries_id", 'virtual_station': virtual_station}, 'lat': {'standard_name': "latitude", 'units': "degrees_north"}, 'lon': {'standard_name': "longitude", 'units': "degrees_east"}, 'altitude': {'standard_name': 'surface_altitude', 'long_name': 'height above the geoid to the lower boundary of the atmosphere', 'units': 'm'}})
+    attrs1.update({'station_id': {'cf_role': "timeseries_id", 'virtual_station': virtual_station}, 'virtual_station': {'long_name': 'Is this station a virtual or modeled station?'}, 'lat': {'standard_name': "latitude", 'units': "degrees_north"}, 'lon': {'standard_name': "longitude", 'units': "degrees_east"}, 'altitude': {'standard_name': 'surface_altitude', 'long_name': 'height above the geoid to the lower boundary of the atmosphere', 'units': 'm'}})
     if 'name' in stn_data.keys():
         attrs1.update({'name': {'long_name': 'station name'}})
     if 'ref' in stn_data.keys():
@@ -425,8 +442,9 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
         encoding1.update({'modified_date': {'_FillValue': -99999999, 'units': "days since 1970-01-01 00:00:00"}})
 
     ## Create the Xarray Dataset
-
     ds1 = results_data.to_xarray()
+
+    ## Assign the stn data to the main Dataset
     for k, v in stn_data.items():
         ds1[k] = v
 
@@ -1038,16 +1056,20 @@ def get_station_data_from_xr(data):
         ancillary_variables = attrs['ancillary_variables'].split(' ')
         data_vars.extend(ancillary_variables)
 
+    stn_fields = list(StationBase.schema()['properties'].keys())
+    stn_fields.extend(['lon', 'lat'])
+
     stn_vars = [v for v in vars1 if (not v in dims1) and (not v in data_vars)]
-    stn_data1 = {k: v['data'] for k, v in data[stn_vars].to_dict()['data_vars'].items()}
+    stn_data1 = {k: v['data'] for k, v in data[stn_vars].to_dict()['data_vars'].items() if k in stn_fields}
     stn_data1['geometry'] = create_geometry([stn_data1['lon'], stn_data1['lat']])
-    # stn_data1['lon'] = stn_data1['geometry']['coordinates'][0]
-    # stn_data1['lat'] = stn_data1['geometry']['coordinates'][1]
     stn_data1.pop('lon')
     stn_data1.pop('lat')
     stn_data1['altitude'] = round(stn_data1['altitude'], 3)
     if not 'virtual_station' in stn_data1:
         stn_data1['virtual_station'] = False
+
+    props = {s: {'data': data[s].to_dict()['data'], 'attrs': data[s].to_dict()['attrs']} for s in stn_vars if s not in stn_fields}
+    stn_data1['properties'] = props
 
     ## Check model
     stn_m = StationBase(**stn_data1)
@@ -1558,7 +1580,7 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
             df4['time'] = df4['time'].dt.tz_localize(ts_local_tz).dt.tz_convert('utc').dt.tz_localize(None)
         df4.set_index(['time', 'height'], inplace=True)
 
-        new1 = data_to_xarray(df4, station_dict, parameter, attrs1, encoding1, run_date=run_date_key, ancillary_variables=ancillary_variables, compression='zstd')
+        new1 = data_to_xarray(df4, station_dict, parameter, attrs1, encoding1, station_attrs=station_attrs, station_encoding=station_encoding, run_date=run_date_key, ancillary_variables=ancillary_variables, compression='zstd')
 
         ## Update the data_dict
         ds_id = ds_mapping['dataset_id']
