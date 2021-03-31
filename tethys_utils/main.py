@@ -1509,7 +1509,7 @@ def process_run_date(processing_code, dataset_list, remote, run_date=None, save_
 #     process_buffer_threaded(obj_df4, remote, last_run_date_key)
 
 
-def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key, mod_date=None, sum_closed='right', other_closed='left', discrete=True, ts_local_tz=None, station_attrs=None, station_encoding=None):
+def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key, mod_date=None, sum_closed='right', other_closed='left', discrete=True, station_attrs=None, station_encoding=None):
     """
 
     """
@@ -1518,9 +1518,8 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
         ancillary_variables = ['modified_date']
     else:
         ancillary_variables = []
-    #     mod_date = pd.Timestamp.today(tz='utc').round('s').tz_localize(None)
 
-    ts_data1 = data_df.copy()
+    tz_str = 'Etc/GMT{0:+}'
 
     ## Iterate through each dataset
     for ds in dataset_list:
@@ -1542,7 +1541,16 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
         ## Pre-Process data
         qual_col = 'quality_code'
         freq_code = ds_mapping['frequency_interval']
+        utc_offset = ds_mapping['utc_offset']
         parameter = ds_mapping['parameter']
+
+        ts_data1 = data_df.copy()
+
+        # Convert times to local TZ if necessary
+        if (not freq_code in ['T', 'H', '1H']) and (not utc_offset == '0H'):
+            t1 = int(utc_offset.split('H')[0])
+            tz1 = tz_str.format(-t1)
+            ts_data1['time'] = ts_data1['time'].dt.tz_localize('UTC').dt.tz_convert(tz1).dt.tz_localize(None)
 
         ## Aggregate data if necessary
         # Parameter
@@ -1576,15 +1584,17 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
 
         ## Convert to xarray
         df4 = df3.copy()
-        if isinstance(ts_local_tz, str):
-            df4['time'] = df4['time'].dt.tz_localize(ts_local_tz).dt.tz_convert('utc').dt.tz_localize(None)
+
+        # Convert time back to UTC if necessary
+        if (not freq_code in ['T', 'H', '1H']) and (not utc_offset == '0H'):
+            df4['time'] = df4['time'].dt.tz_localize(tz1).dt.tz_convert('utc').dt.tz_localize(None)
+
         df4.set_index(['time', 'height'], inplace=True)
 
         new1 = data_to_xarray(df4, station_dict, parameter, attrs1, encoding1, station_attrs=station_attrs, station_encoding=station_encoding, run_date=run_date_key, ancillary_variables=ancillary_variables, compression='zstd')
 
         ## Update the data_dict
         ds_id = ds_mapping['dataset_id']
-        # stn_id = station_dict['station_id']
 
         data_dict[ds_id].append(new1)
 
