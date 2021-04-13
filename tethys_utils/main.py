@@ -1831,7 +1831,7 @@ def create_shifted_df(series, from_range, to_range, freq_code, agg_fun, ref_name
     df = series.reset_index()
     data_col = df.columns[1]
     ts_col = df.columns[0]
-    s2 = tu.grp_ts_agg(df, None, ts_col, freq_code, agg_fun, discrete, **kwargs)[data_col]
+    s2 = grp_ts_agg(df, None, ts_col, freq_code, agg_fun, discrete, **kwargs)[data_col]
 
     if include_0:
         f_hours = list(range(from_range-1, to_range+1))
