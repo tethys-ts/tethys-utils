@@ -543,7 +543,7 @@ def grp_ts_agg(df, grp_col, ts_col, freq_code, agg_fun, discrete=False, **kwargs
                 df3 = df2.reset_index().set_index(grp_col + [ts_col]).sort_index()
 
             else:
-                grp_col.extend([pd.Grouper(freq=freq_code, **kwargs)])
+                grp_col.extend([pd.Grouper(level=ts_col, freq=freq_code, **kwargs)])
                 df3 = df1.groupby(grp_col).agg(agg_fun)
 
             return df3
@@ -1819,7 +1819,34 @@ def delete_result_objects_s3(conn_config, bucket, dataset_ids=None, keep_last=10
     return rem_keys
 
 
+def create_shifted_df(series, from_range, to_range, freq_code, agg_fun, ref_name, include_0=False, discrete=False, **kwargs):
+    """
 
+    """
+    if not isinstance(series, pd.Series):
+        raise TypeError('series must be a pandas Series.')
+    if not isinstance(series.index, pd.DatetimeIndex):
+        raise TypeError('The series index must be a pandas DatetimeIndex.')
+
+    df = series.reset_index()
+    data_col = df.columns[1]
+    ts_col = df.columns[0]
+    s2 = tu.grp_ts_agg(df, None, ts_col, freq_code, agg_fun, discrete, **kwargs)[data_col]
+
+    if include_0:
+        f_hours = list(range(from_range-1, to_range+1))
+        f_hours[0] = 0
+    else:
+        f_hours = list(range(from_range, to_range+1))
+
+    df_list = []
+    for d in f_hours:
+        n1 = s2.shift(d, 'H')
+        n1.name = ref_name + '_' + str(d)
+        df_list.append(n1)
+    data = pd.concat(df_list, axis=1).dropna()
+
+    return data
 
 
 
