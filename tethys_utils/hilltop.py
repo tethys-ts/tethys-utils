@@ -283,7 +283,7 @@ def convert_site_names(names, rem_m=True):
 
 
 
-def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, quality_codes=True, public_url=None, save_interval_hours=336):
+def get_hilltop_results(param, station_mtype_corrections=None, quality_codes=True, public_url=None, save_interval_hours=336, modified_date=True):
     """
 
     """
@@ -419,12 +419,15 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
                     ## Get the station data
                     stn = stns_dict[row['station_id']]
 
-                    mod_date = pd.Timestamp.today(tz='utc').round('s').tz_localize(None)
+                    if modified_date:
+                        mod_date = pd.Timestamp.today(tz='utc').round('s').tz_localize(None)
+                    else:
+                        mod_date = None
 
                     ###########################################
                     ## Package up into the data_dict
                     if not ts_data1.empty:
-                        tu.prepare_results(data_dict, datasets[meas], stn, ts_data1, max_run_date_key, mod_date, other_closed='right', ts_local_tz=ts_local_tz)
+                        tu.prepare_results(data_dict, datasets[meas], stn, ts_data1, max_run_date_key, mod_date, other_closed='right')
 
                 ########################################
                 ### Save results and stations
@@ -434,7 +437,7 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
     except Exception as err:
         # print(err)
         print(traceback.format_exc())
-        tu.email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc(), param['remote']['email']['smtp_server'])
+        tu.email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-orc-env qc', traceback.format_exc(), param['remote']['email']['smtp_server'])
 
     try:
 
@@ -455,7 +458,7 @@ def get_hilltop_results(param, ts_local_tz, station_mtype_corrections=None, qual
     except Exception as err:
         # print(err)
         print(traceback.format_exc())
-        tu.email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-es-hilltop', traceback.format_exc(), param['remote']['email']['smtp_server'])
+        tu.email_msg(param['remote']['email']['sender_address'], param['remote']['email']['sender_password'], param['remote']['email']['receiver_address'], 'Failure on tethys-extraction-orc-env qc', traceback.format_exc(), param['remote']['email']['smtp_server'])
 
 
 
