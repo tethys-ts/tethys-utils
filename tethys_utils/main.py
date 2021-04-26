@@ -430,7 +430,7 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
 
     if 'int' in height.dtype.name:
         height_enc = {'dtype': height.dtype.name, '_FillValue': -9999}
-        dtype = height.dtype.name
+        # dtype = height.dtype.name
     elif 'float' in height.dtype.name:
         height_enc = {'dtype': 'int32', '_FillValue': -9999, 'scale_factor': 0.001}
     else:
@@ -1086,39 +1086,8 @@ def process_station_summ(dataset_id, station_id, data, object_infos, mod_date=No
     elif isinstance(mod_date, (str, pd.Timestamp)):
         mod_date = pd.Timestamp(mod_date).tz_localize(None)
 
-    ## Determine the latest result
-    # s3 = s3_connection(connection_config)
-    # prefix = key_patterns['results'].split('{run_date}')[0].format(dataset_id=dataset_id, station_id=station_id)
-
-    # object_infos1 = process_object_keys(s3, bucket, prefix)
-    # obj_list = [s.dict() for s in object_infos1 if s.dict()['key'].find('results') > 0]
-    # obj_keys_df = pd.DataFrame(obj_list)
-    # last_run_date = obj_keys_df['run_date'].max()
-    # obj_key = obj_keys_df[obj_keys_df['run_date'] == last_run_date]['key']
-
-    # if obj_key.empty:
-    #     raise ValueError("""**Could not get run dates from S3...
-    #                         dataset_id: {ds_id}
-    #                         station_id: {stn_id}""".format(ds_id=dataset_id, stn_id=station_id))
-
-    # ## Get the results
-    # if isinstance(public_url, str):
-    #     connection_config = public_url
-
-    # data_list = []
-    # for key in obj_key:
-    #     ts_obj = get_object_s3(key, connection_config, bucket, 'zstd')
-    #     ts_xr = xr.load_dataset(ts_obj)
-    #     data_list.append(ts_xr)
-
-    # xr2 = xr.concat(data_list, dim='time', data_vars='minimal')
-    # data = xr2.sel(time=~xr2.get_index('time').duplicated('last'))
-
-    ## Get the keys info list
-    # object_infos1 = info_dict[station_id]
-
     ## Generate the info for the recently created data
-    station_id = str(data['station_id'].values)
+    # station_id = str(data['station_id'].values)
     stats1 = get_new_stats(data)
 
     ## Put it all together
@@ -1192,7 +1161,7 @@ def put_remote_agg_stations(s3, bucket, dataset_id, threads=30):
     """
 
     """
-    base_stn_key = key_patterns['station']
+    # base_stn_key = key_patterns['station']
     agg_stn_key = key_patterns['stations']
 
     stn_prefix = agg_stn_key.split('stations.json.zst')[0].format(dataset_id=dataset_id)
@@ -1218,7 +1187,7 @@ def put_remote_agg_datasets(s3, bucket, threads=30):
     """
 
     """
-    base_ds_key = key_patterns['dataset']
+    # base_ds_key = key_patterns['dataset']
     agg_ds_key = key_patterns['datasets']
 
     ds_prefix = agg_ds_key.split('datasets.json.zst')[0]
@@ -1240,7 +1209,7 @@ def put_remote_agg_datasets(s3, bucket, threads=30):
     return output
 
 
-def compare_datasets_from_s3(conn_config, bucket, new_data, add_old=False, read_buffer=False, last_run_date_key=None, public_url=None):
+def compare_datasets_from_s3(conn_config, bucket, new_data, add_old=False, last_run_date_key=None, public_url=None):
     """
     Parameters
     ----------
@@ -1252,8 +1221,6 @@ def compare_datasets_from_s3(conn_config, bucket, new_data, add_old=False, read_
         The new data that should be compared to existing data in S3.
     add_old : bool
         Should the data in the S3 be added to the output?
-    read_buffer : bool
-        Should the results buffer file be read instead of the normal results file?
     last_run_date_key : str
         Specify the last run key instead of having the function figure it out. The function will do a check to make sure that the key exists.
     public_url : str
@@ -1273,28 +1240,15 @@ def compare_datasets_from_s3(conn_config, bucket, new_data, add_old=False, read_
 
     key_dict = {'dataset_id': dataset_id, 'station_id': station_id}
 
-    if read_buffer:
-        base_key_pattern = key_patterns['results_buffer']
-    else:
-        base_key_pattern = key_patterns['results']
+    base_key_pattern = key_patterns['results']
 
     ## Get list of keys
-    # s3 = s3_connection(conn_config)
 
     if isinstance(last_run_date_key, str):
         key_dict.update({'run_date': last_run_date_key})
         last_key = base_key_pattern.format(**key_dict)
-        # last_key1 = pd.DataFrame({'Key': [last_key]})
-        # try:
-        #     last_info1 = s3.head_object(Bucket=bucket, Key=last_key)
-        #     last_key1 = pd.DataFrame({'Key': [last_key]})
-        # except:
-        #     last_key1 = pd.DataFrame()
     else:
         last_key = None
-        # prefix_key = key_patterns['results'].split('{run_date}')[0].format(**key_dict)
-        # all_keys = list_objects_s3(s3, bucket, prefix_key)
-        # last_key1 = all_keys[all_keys['KeyDate'] == all_keys['KeyDate'].max()]
 
     ## Get previous data and compare
     if isinstance(public_url, str):
@@ -1702,10 +1656,6 @@ def update_results_s3(processing_code, data_dict, run_date_dict, remote, threads
                 # print('Save results')
                 key_dict = {'dataset_id': ds_id, 'station_id': stn_id, 'run_date': run_date_key}
 
-                # if read_buffer:
-                #     new_key = key_patterns['results_buffer'].format(**key_dict)
-                # else:
-                #     new_key = key_patterns['results'].format(**key_dict)
                 new_key = key_patterns['results'].format(**key_dict)
 
                 cctx = zstd.ZstdCompressor(level=1)
