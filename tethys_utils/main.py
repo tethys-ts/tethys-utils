@@ -394,16 +394,15 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
     stn_data = station_data_integrety_checks(stn_data, attrs=station_attrs, encoding=station_encoding)
 
     ## Assign Attributes
-    if isinstance(station_attrs, dict):
-        attrs1 = copy.deepcopy(station_attrs)
-    else:
-        attrs1 = {}
+    attrs1 = {'station_id': {'cf_role': "timeseries_id", 'virtual_station': virtual_station}, 'virtual_station': {'long_name': 'Is this station a virtual or modeled station?'}, 'lat': {'standard_name': "latitude", 'units': "degrees_north"}, 'lon': {'standard_name': "longitude", 'units': "degrees_east"}, 'altitude': {'standard_name': 'surface_altitude', 'long_name': 'height above the geoid to the lower boundary of the atmosphere', 'units': 'm'}}
 
-    attrs1.update({'station_id': {'cf_role': "timeseries_id", 'virtual_station': virtual_station}, 'virtual_station': {'long_name': 'Is this station a virtual or modeled station?'}, 'lat': {'standard_name': "latitude", 'units': "degrees_north"}, 'lon': {'standard_name': "longitude", 'units': "degrees_east"}, 'altitude': {'standard_name': 'surface_altitude', 'long_name': 'height above the geoid to the lower boundary of the atmosphere', 'units': 'm'}})
     if 'name' in stn_data.keys():
         attrs1.update({'name': {'long_name': 'station name'}})
     if 'ref' in stn_data.keys():
         attrs1.update({'ref': {'long_name': 'station reference id given by the owner'}})
+
+    if isinstance(station_attrs, dict):
+        attrs1.update(copy.deepcopy(station_attrs))
 
     ts_cols = list(results_data.columns)
 
@@ -419,12 +418,10 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
             attrs1[param_name].update({'ancillary_variables': ' '.join(ancillary_variables)})
 
     ## Assign encodings
-    if isinstance(station_encoding, dict):
-        encoding1 = copy.deepcopy(station_encoding)
-    else:
-        encoding1 = {}
+    encoding1 = {'lon': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.0000001}, 'lat': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.0000001}, 'altitude': {'dtype': 'int32', '_FillValue': -9999, 'scale_factor': 0.001}}
 
-    encoding1.update({'lon': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.00001}, 'lat': {'dtype': 'int32', '_FillValue': -999999, 'scale_factor': 0.00001}, 'altitude': {'dtype': 'int32', '_FillValue': -9999, 'scale_factor': 0.001}})
+    if isinstance(station_encoding, dict):
+        encoding1.update(copy.deepcopy(station_encoding))
 
     height = pd.to_numeric(results_data.reset_index()['height'], downcast='integer')
 
