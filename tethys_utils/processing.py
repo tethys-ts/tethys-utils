@@ -340,8 +340,6 @@ def compare_xrs(old_xr, new_xr, add_old=False):
     old_df = old_xr[vars2].to_dataframe().reset_index()
     new_df = new_xr[vars2].to_dataframe().reset_index()
 
-    # old_df['modified_date'] = pd.Timestamp('2020-12-29')
-
     ## run comparison
     comp = compare_dfs(old_df, new_df, on, parameter, add_old=add_old)
 
