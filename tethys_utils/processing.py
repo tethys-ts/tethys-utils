@@ -184,8 +184,7 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
     height = pd.to_numeric(results_data.reset_index()['height'], downcast='integer')
 
     if 'int' in height.dtype.name:
-        height_enc = {'dtype': height.dtype.name, '_FillValue': -9999}
-        # dtype = height.dtype.name
+        height_enc = {'dtype': height.dtype.name}
     elif 'float' in height.dtype.name:
         height_enc = {'dtype': 'int32', '_FillValue': -9999, 'scale_factor': 0.001}
     else:
@@ -805,7 +804,7 @@ def determine_array_size(arr, starting_x_size=100, starting_y_size=100, incremen
         print('max_object_size:', str(max_obj_size))
         raise ValueError('max object size is greater than the allotted size. Reduce the increment value and start again.')
 
-    obj_dict = {'x_size': x_size, 'y_size': y_size, 'max_obj_size': max_obj_size, 'min_obj_size': min(obj_sizes)}
+    obj_dict = {'x_size': x_size, 'y_size': y_size, 'max_obj_size': max_obj_size, 'min_obj_size': min(obj_sizes), 'sum_obj_size': sum(obj_sizes), 'len_obj': len(obj_sizes)}
 
     return obj_dict
 

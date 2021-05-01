@@ -13,6 +13,7 @@ import tethys_utils as tu
 import xarray as xr
 from time import time
 import pandas as pd
+from tethysts.utils import read_pkl_zstd
 
 #################################################
 ### Parameters
@@ -65,7 +66,7 @@ da2.attrs = {}
 da2.name = 'altitude'
 
 # da2.encoding = {'dtype': 'int32', '_FillValue': -9999, 'scale_factor': 0.1}
-# da2.encoding = {'dtype': 'int16', '_FillValue': -9999, 'scale_factor': 1}
+# da2.encoding = {'dtype': 'int16'}
 # da2.encoding = {'dtype': 'int16', '_FillValue': -9999, 'scale_factor': 0.1}
 da2.encoding = {}
 
@@ -78,10 +79,10 @@ ds1 = ds1.expand_dims('time')
 da3 = ds1.altitude
 arr = da3
 
-# nc1 = tu.write_pkl_zstd(ds1.to_netcdf())
-# len(nc1)
+nc1 = tu.misc.write_pkl_zstd(ds1.to_netcdf())
+len(nc1)
 
-# nc2 = xr.load_dataset(tu.read_pkl_zstd(nc1))
+nc2 = xr.load_dataset(read_pkl_zstd(nc1))
 
 # ar1 = np.array_split(da2, [100, 100])
 
@@ -234,7 +235,7 @@ def determine_array_size(arr, starting_x_size=100, starting_y_size=100, incremen
 
     while True:
         block_list = split_grid(arr, x_size=x_size, y_size=y_size, x_name=x_name, y_name=y_name)
-        obj_sizes = [len(tu.write_pkl_zstd(nc.to_netcdf())) for nc in block_list]
+        obj_sizes = [len(tu.processing.write_pkl_zstd(nc.to_netcdf())) for nc in block_list]
         max_obj_size = max(obj_sizes)
 
         if max_obj_size < min_size*1000:
@@ -256,12 +257,13 @@ obj_dict = determine_array_size(da3, 600, 600, max_size=1100000)
 
 block_list = split_grid(da3, obj_dict['x_size'], obj_dict['y_size'])
 
-obj_sizes = [len(tu.write_pkl_zstd(nc.to_netcdf())) for nc in block_list]
+obj_sizes = [len(tu.processing.write_pkl_zstd(nc.to_netcdf())) for nc in block_list]
 
 max(obj_sizes)
 min(obj_sizes)
-
-
+sum(obj_sizes)
+len(obj_sizes)
+sum(obj_sizes)/len(obj_sizes)
 
 shape1 = [nc.shape for nc in block_list]
 
