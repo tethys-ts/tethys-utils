@@ -42,7 +42,7 @@ class S3ObjectKey(BaseModel):
     key: str
     bucket: str
     content_length: int
-    etag: str
+    etag: str = None
     run_date: datetime
 
 class StationBase(BaseModel):
@@ -53,9 +53,8 @@ class StationBase(BaseModel):
     ref: str = None
     name: str = None
     osm_id: int = None
-    virtual_station: bool
     geometry: Geometry
-    altitude: float
+    altitude: float = None
     properties: Dict = Field(None, description='Any additional station specific properties.')
 
 
@@ -68,9 +67,8 @@ class Station(BaseModel):
     ref: str = None
     name: str = None
     osm_id: int = None
-    virtual_station: bool
     geometry: Geometry
-    altitude: float
+    altitude: float = None
     stats: Stats
     results_object_key: List[S3ObjectKey]
     properties: Dict = Field(None, description='Any additional station specific properties.')
@@ -82,7 +80,6 @@ class Dataset(BaseModel):
     Dataset data.
     """
     dataset_id: str = Field(..., description='The unique dataset uuid.')
-    # station_object_key: str = Field(None, description='The object key to the stations data.')
     feature: str = Field(..., description='The hydrologic feature associated with the dataset.')
     parameter: str = Field(..., description='The recorded observation parameter.')
     method: str = Field(..., description='The way the recorded observation was obtained.')
@@ -94,14 +91,17 @@ class Dataset(BaseModel):
     units: str = Field(..., description='The units of the result.')
     license: str = Field(..., description='The legal data license associated with the dataset defined by the owner.')
     attribution: str = Field(..., description='The legally required attribution text to be distributed with the data defined by the owner.')
-    result_type: str = Field(..., description='The type of result. This is a category to define how the station results can or cannot be handled on the whole. For example, a time_series_grid would indicate that the stations are alligned in a grid.')
+    # result_type: str = Field(None, description='The type of result. This is a category to define how the station results can or cannot be handled on the whole. For example, a time_series_grid would indicate that the stations are alligned in a grid.')
+    spatial_distribution: str = Field(..., description='This describes how the spatial data are distributed. Either sparse or grid.')
+    geometry_type: str = Field(..., description='This describes how the spatial dimensions are stored. Point, Line, Polygon, or Collection. Follows the OGC spatial data types.')
+    grouping: str = Field(..., description='This describes how the staions and the associated data are grouped. Either none or blocks.')
+    extent: Geometry = Field(None, description='The geographical extent of the datset as a simple rectangular polygon.')
     cf_standard_name: str = Field(None, description='The CF conventions standard name for the parameter.')
     wrf_standard_name: str = Field(None, description='The WRF standard name for the parameter.')
     precision: float = Field(None, description='The decimal precision of the result values.')
     description: str = Field(None, description='Dataset description.')
     processing_code: int = Field(None, description='The processing code to determine how the input data should be processed.')
     properties: Dict = Field(None, description='Any additional dataset specific properties.')
-    # station_object_key: S3ObjectKey
     modified_date: datetime = Field(None, description='The modification date of the last edit.')
 
 

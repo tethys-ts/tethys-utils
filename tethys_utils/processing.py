@@ -12,8 +12,13 @@ import pandas as pd
 import copy
 import orjson
 from hashlib import blake2b
-from tethys_utils.data_models import Geometry, Dataset, DatasetBase, Station, Stats, StationBase
-from tethys_utils.misc import make_run_date_key, grp_ts_agg, write_pkl_zstd
+# from tethys_utils.data_models import Geometry, Dataset, DatasetBase, Station, Stats, StationBase
+from data_models import Geometry, Dataset, DatasetBase, Station, Stats, StationBase
+# from tethys_utils.misc import make_run_date_key, grp_ts_agg, write_pkl_zstd
+from misc import make_run_date_key, grp_ts_agg, write_pkl_zstd
+import geojson
+from shapely.geometry import shape
+from shapely import wkb
 
 ############################################
 ### Parameters
@@ -26,7 +31,7 @@ agg_stat_mapping = {'mean': 'mean', 'cumulative': 'sum', 'continuous': None, 'ma
 ### Functions
 
 
-def results_data_integrety_checks(data, param_name, attrs, encoding, ancillary_variables=None):
+def results_data_integrety_checks(data, param_name, attrs, encoding, spatial_distribution, ancillary_variables=None):
     """
 
     """
@@ -42,9 +47,15 @@ def results_data_integrety_checks(data, param_name, attrs, encoding, ancillary_v
 
     data_cols.extend([param_name])
 
-    ts_index_list = ['time', 'height']
+    if spatial_distribution == 'sparse':
+        ts_index_list = ['geometry', 'time', 'height']
+    elif spatial_distribution == 'grid':
+        ts_index_list = ['lon', 'lat', 'time', 'height']
+    else:
+        raise ValueError('spatial_distribution should be either sparse or grid.')
+
     ts_essential_list = [param_name]
-    ts_no_attrs_list = ['modified_date']
+    ts_no_attrs_list = ['modified_date', 'lat', 'lon', 'geometry']
 
     ts_data_cols = list(data.columns)
 
@@ -77,13 +88,27 @@ def results_data_integrety_checks(data, param_name, attrs, encoding, ancillary_v
     return data
 
 
-def station_data_integrety_checks(data, attrs=None, encoding=None):
+def station_data_integrety_checks(data, spatial_distribution, attrs=None, encoding=None):
     """
 
     """
-    # Station data
-    ignore_keys = ['station_id', 'lat', 'lon', 'name', 'altitude', 'ref', 'virtual_station', 'geometry']
-    other_keys = [s for s in data if s not in ignore_keys]
+    stn_m = StationBase(**data)
+    stn_data = orjson.loads(stn_m.json(exclude_none=True))
+
+    if spatial_distribution == 'sparse':
+        essential_keys = ['geometry', 'station_id']
+    elif spatial_distribution == 'grid':
+        essential_keys = ['lon', 'lat', 'station_id']
+    else:
+        raise ValueError('spatial_distribution should be either sparse or grid.')
+
+    for c in essential_keys:
+        if not c in stn_data:
+            raise ValueError('The Dict must contain the key: ' + str(c))
+
+
+    ignore_attr_keys = ['station_id', 'lat', 'lon', 'name', 'altitude', 'ref', 'virtual_station', 'geometry']
+    other_keys = [s for s in stn_data if s not in ignore_attr_keys]
 
     if other_keys:
 
@@ -101,7 +126,7 @@ def station_data_integrety_checks(data, attrs=None, encoding=None):
         else:
             raise TypeError('encoding must be a dict')
 
-    return data
+    return stn_data
 
 
 def data_to_xarray(results_data, station_data, param_name, results_attrs, results_encoding, station_attrs=None, station_encoding=None, virtual_station=False, run_date=None, ancillary_variables=None, compression=False, compress_level=1):
@@ -111,14 +136,13 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
     Parameters
     ----------
     results_data : DataFrame
-        DataFrame of the core parameter and associated ancillary variable indexed by time and height.
-        The index should have the names of "time" and "height". "height" is height above the surface. So if the parameter represents a surface measurement, then the height should be 0.
+        DataFrame of the core parameter and associated ancillary variable. If the spatial distribution is sparse then the data should be indexed by geometry, time, and height. If the spatial distribution is grid then the data should be indexed by lon, lat, time, and height.
     station_data : dict
-        Dictionary of the station data. Should include a station_id which should be a hashed string from blake2b (digest_size=12) of the geojson geometry. The minimum necessary other fields should include lat, lon, and altitude. Data owner specific other fields can include "ref" for the reference id and "name" for the station name.
+        Dictionary of the station data. Should include a station_id which should be a hashed string from blake2b (digest_size=12) of the geojson geometry. The other necessary field is geometry, which is the geometry of the results object is not grouped or a boundary extent as a polygon if the results object is grouped. Data owner specific other fields can include "ref" for the reference id and "name" for the station name.
     param_name : str
-        The core parameter name of the column in the ts_data DataFrame.
+        The core parameter name of the column in the results_data DataFrame.
     results_attrs : dict
-        A dictionary of the xarray/netcdf attributes of the results_data. Where the keys are the columns and the values are the attributes.
+        A dictionary of the xarray/netcdf attributes of the results_data. Where the keys are the columns and the values are the attributes. Only necessary if additional ancilliary valiables are added to the results_data.
     results_encoding : dict
         A dictionary of the xarray/netcdf encodings for the results_data.
     station_attrs : dict or None
@@ -129,30 +153,36 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
     Returns
     -------
     Xarray Dataset or bytes object
-
     """
-    ## Station data prep
-    stn_m = StationBase(**station_data)
-    stn_data = orjson.loads(stn_m.json(exclude_none=True))
-    stn_data['lon'] = stn_data['geometry']['coordinates'][0]
-    stn_data['lat'] = stn_data['geometry']['coordinates'][1]
+    ## dataset metadata
+    ds_mapping = results_attrs[param_name]
+    param_name = ds_mapping['parameter']
+    sd = ds_mapping['spatial_distribution']
+    grouping = ds_mapping['grouping']
+
+    ## Integrity Checks
+
+    # Time series data
+    ts_data1 = results_data_integrety_checks(results_data, param_name, results_attrs, results_encoding, sd, ancillary_variables)
+
+    # Station data
+    stn_data = station_data_integrety_checks(station_data, attrs=station_attrs, encoding=station_encoding)
+
+    ## geometry from station data
+    geometry = stn_data['geometry']
+    if grouping == 'blocks':
+        stn_data['extent'] = shape(geometry).wkt
     stn_data.pop('geometry')
+
+    ## Station properties
     if 'properties' in stn_data:
         props = stn_data['properties'].copy()
         for k, v in props.items():
             stn_data[k] = v
         stn_data.pop('properties')
 
-    ## Integrity Checks
-
-    # Time series data
-    ts_data1 = results_data_integrety_checks(results_data, param_name, results_attrs, results_encoding, ancillary_variables)
-
-    # Station data
-    stn_data = station_data_integrety_checks(stn_data, attrs=station_attrs, encoding=station_encoding)
-
     ## Assign Attributes
-    attrs1 = {'station_id': {'cf_role': "timeseries_id", 'virtual_station': virtual_station}, 'virtual_station': {'long_name': 'Is this station a virtual or modeled station?'}, 'lat': {'standard_name': "latitude", 'units': "degrees_north"}, 'lon': {'standard_name': "longitude", 'units': "degrees_east"}, 'altitude': {'standard_name': 'surface_altitude', 'long_name': 'height above the geoid to the lower boundary of the atmosphere', 'units': 'm'}}
+    attrs1 = {'station_id': {'cf_role': "timeseries_id", 'virtual_station': virtual_station}, 'virtual_station': {'long_name': 'Is this station a virtual or modeled station?'}, 'lat': {'standard_name': "latitude", 'units': "degrees_north"}, 'lon': {'standard_name': "longitude", 'units': "degrees_east"}, 'altitude': {'standard_name': 'surface_altitude', 'long_name': 'height above the geoid to the lower boundary of the atmosphere', 'units': 'm'}, 'geometry': {'long_name': 'The hexadecimal encoding of the Well-Known Binary (WKB) geometry', 'crs_EPSG': 4326}}
 
     if 'name' in stn_data.keys():
         attrs1.update({'name': {'long_name': 'station name'}})
@@ -162,7 +192,7 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
     if isinstance(station_attrs, dict):
         attrs1.update(copy.deepcopy(station_attrs))
 
-    ts_cols = list(results_data.columns)
+    ts_cols = list(ts_data1.columns)
 
     attrs1.update(results_attrs)
     if 'cf_standard_name' in attrs1[param_name]:
@@ -181,7 +211,7 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
     if isinstance(station_encoding, dict):
         encoding1.update(copy.deepcopy(station_encoding))
 
-    height = pd.to_numeric(results_data.reset_index()['height'], downcast='integer')
+    height = pd.to_numeric(ts_data1.reset_index()['height'], downcast='integer')
 
     if 'int' in height.dtype.name:
         height_enc = {'dtype': height.dtype.name}
@@ -196,7 +226,7 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
         encoding1.update({'modified_date': {'_FillValue': -99999999, 'units': "days since 1970-01-01 00:00:00"}})
 
     ## Create the Xarray Dataset
-    ds1 = results_data.to_xarray()
+    ds1 = ts_data1.to_xarray()
 
     ## Assign the stn data to the main Dataset
     for k, v in stn_data.items():
@@ -217,7 +247,6 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
         if a in ds1:
             ds1[a].attrs = val
 
-    ds_mapping = results_attrs[param_name]
     title_str = '{agg_stat} {parameter} in {units} of the {feature} by a {method} owned by {owner}'.format(agg_stat=ds_mapping['aggregation_statistic'], parameter=ds_mapping['parameter'], units=ds_mapping['units'], feature=ds_mapping['feature'], method=ds_mapping['method'], owner=ds_mapping['owner'])
 
     run_date_key = make_run_date_key(run_date)
@@ -403,24 +432,35 @@ def process_datasets(datasets):
     return dataset_list
 
 
-def create_geometry(coords, geo_type='Point'):
+def create_geometry_df(df, extent=False, altitude=True, precision=7):
     """
 
     """
-    # print(type(coords[0]))
-    if geo_type == 'Point':
-        coords = [np.round(coords[0], 5), np.round(coords[1], 5)]
-        # geo1 = Point(coords)
-        geo1 = {"coordinates": coords, "type": "Point"}
+    if extent:
+        if ('lon' in df) and ('lon' in df):
+            min_lon = df['lon'].min()
+            max_lon = df['lon'].max()
+            min_lat = df['lat'].min()
+            max_lat = df['lat'].max()
+            geometry = geojson.Polygon([[(min_lon, min_lat), (min_lon, max_lat), (max_lon, max_lat), (max_lon, min_lat), (min_lon, min_lat)]], True, precision=precision)
+        else:
+            raise ValueError('Extent must have lat and lon in the df.')
     else:
-        raise ValueError('geo_type not implemented yet')
+        if 'geometry' in df:
+            geometry = df['geometry']
+        elif ('lon' in df) and ('lon' in df):
+            if altitude:
+                if 'altitude' in df:
+                    coords = df.apply(lambda x: (x.lon, x.lat, x.altitude), axis=1)
+                else:
+                    coords = df.apply(lambda x: (x.lon, x.lat), axis=1)
+            else:
+                coords = df.apply(lambda x: (x.lon, x.lat), axis=1)
+            geometry = coords.apply(lambda x: geojson.Point(x, True, precision=precision))
+        else:
+            raise ValueError('Either a dict of geometry or a combo of lat and lon must be in the dataframe.')
 
-    # if not geo1.is_valid:
-    #     raise ValueError('coordinates are not valid')
-
-    geo2 = Geometry(**geo1).dict()
-
-    return geo2
+    return geometry
 
 
 def assign_station_id(geometry):
@@ -430,6 +470,17 @@ def assign_station_id(geometry):
     station_id = blake2b(orjson.dumps(geometry, option=orjson.OPT_SERIALIZE_NUMPY), digest_size=12).hexdigest()
 
     return station_id
+
+
+def assign_station_ids_df(stns_df, extent=False, precision=5):
+    """
+
+    """
+    geometry = create_geometry_df(stns_df, extent, False, precision)
+
+    stn_ids = geometry.apply(lambda x: assign_station_id(x))
+
+    return stn_ids
 
 
 def get_new_stats(data):
@@ -454,34 +505,34 @@ def get_new_stats(data):
     return stats1
 
 
-def process_stations_df(stns_df):
-    """
-    For processing the initial stations prior to assigning the altitude.
-    """
-    stns1 = stns_df.copy()
-    stns1['coords'] = stns1.apply(lambda x: [x.lon, x.lat], axis=1)
+# def process_stations_df(stns_df, precision=6):
+#     """
+#     For processing the initial stations prior to assigning the altitude.
+#     """
+#     stns1 = stns_df.copy()
+#     stns1['coords'] = stns1.apply(lambda x: [x.lon, x.lat], axis=1)
 
-    stns1['geo'] = stns1.apply(lambda x: create_geometry(x.coords), axis=1)
-    stns1['station_id'] = stns1.apply(lambda x: assign_station_id(x.geo), axis=1)
+#     stns1['geometry'] = stns1.apply(lambda x: geojson.Point(x.coords, True, precision=precision), axis=1)
+#     stns1['station_id'] = stns1.apply(lambda x: assign_station_id(x.geometry), axis=1)
 
-    stns2 = stns1.drop_duplicates('station_id').drop('geo', axis=1).copy()
+#     stns2 = stns1.drop_duplicates('station_id').drop(['coords', 'lat', 'lon'], axis=1).copy()
 
-    return stns2
+#     return stns2
 
 
-def process_station_base(coords=None, station_id=None, geometry=None, ref=None, name=None, osm_id=None, altitude=None, properties=None, virtual_station=False, geo_type='Point', return_dict=True):
+def process_station_base(coords=None, station_id=None, geometry=None, ref=None, name=None, osm_id=None, altitude=None, properties=None, return_dict=True):
     """
 
     """
     if isinstance(coords, list):
         ## Create geometry and station_id
-        geometry = create_geometry(coords, geo_type=geo_type)
+        geometry = geojson.Point(coords, True, precision=5)
         station_id = assign_station_id(geometry)
     elif (not isinstance(station_id, str)) & (not isinstance(geometry, dict)):
         raise ValueError('coords or station_id must be assigned')
 
     ## Put into data model
-    stn_m = StationBase(station_id=station_id, geometry=geometry, ref=ref, name=name, osm_id=osm_id, altitude=altitude, properties=properties, virtual_station=virtual_station)
+    stn_m = StationBase(station_id=station_id, geometry=geometry, ref=ref, name=name, osm_id=osm_id, altitude=altitude, properties=properties)
 
     if return_dict:
         stn_m = orjson.loads(stn_m.json(exclude_none=True))
@@ -521,7 +572,7 @@ def get_station_data_from_xr(data):
 
     stn_vars = [v for v in vars1 if (not v in dims1) and (not v in data_vars)]
     stn_data1 = {k: v['data'] for k, v in data[stn_vars].to_dict()['data_vars'].items() if k in stn_fields}
-    stn_data1['geometry'] = create_geometry([stn_data1['lon'], stn_data1['lat']])
+    stn_data1['geometry'] = geojson.Point([stn_data1['lon'], stn_data1['lat']], True)
     stn_data1.pop('lon')
     stn_data1.pop('lat')
     stn_data1['altitude'] = round(stn_data1['altitude'], 3)
@@ -605,16 +656,16 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
         ## Aggregate data if necessary
         # Parameter
         if freq_code == 'T':
-            grp1 = ts_data1.groupby(['time', 'height'])
+            grp1 = ts_data1.groupby(['geometry', 'time', 'height'])
             data1 = grp1[parameter].mean()
 
         else:
             agg_fun = agg_stat_mapping[ds_mapping['aggregation_statistic']]
 
             if agg_fun == 'sum':
-                data1 = grp_ts_agg(ts_data1[['time', 'height', parameter]], 'height', 'time', freq_code, agg_fun, closed=sum_closed)
+                data1 = grp_ts_agg(ts_data1[['geometry', 'time', 'height', parameter]], ['geometry', 'height'], 'time', freq_code, agg_fun, closed=sum_closed)
             else:
-                data1 = grp_ts_agg(ts_data1[['time', 'height', parameter]], 'height', 'time', freq_code, agg_fun, discrete, closed=other_closed)
+                data1 = grp_ts_agg(ts_data1[['geometry', 'time', 'height', parameter]], ['geometry', 'height'], 'time', freq_code, agg_fun, discrete, closed=other_closed)
 
         # Quality code
         if qual_col in ts_data1.columns:
@@ -622,7 +673,7 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
             if freq_code == 'T':
                 qual1 = grp1[qual_col].min()
             else:
-                qual1 = grp_ts_agg(ts_data1[['time', 'height', qual_col]], 'height', 'time', freq_code, 'min')
+                qual1 = grp_ts_agg(ts_data1[['geometry', 'time', 'height', qual_col]], ['geometry', 'height'], 'time', freq_code, 'min')
             df3 = pd.concat([data1, qual1], axis=1).reset_index().dropna()
 
             ancillary_variables.extend([qual_col])
@@ -639,7 +690,7 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
         if (not freq_code in ['T', 'H', '1H']) and (not utc_offset == '0H'):
             df4['time'] = df4['time'].dt.tz_localize(tz1).dt.tz_convert('utc').dt.tz_localize(None)
 
-        df4.set_index(['time', 'height'], inplace=True)
+        df4.set_index(['geometry', 'time', 'height'], inplace=True)
 
         new1 = data_to_xarray(df4, station_dict, parameter, attrs1, encoding1, station_attrs=station_attrs, station_encoding=station_encoding, run_date=run_date_key, ancillary_variables=ancillary_variables, compression='zstd')
 
