@@ -166,7 +166,7 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
     ts_data1 = results_data_integrety_checks(results_data, param_name, results_attrs, results_encoding, sd, ancillary_variables)
 
     # Station data
-    stn_data = station_data_integrety_checks(station_data, attrs=station_attrs, encoding=station_encoding)
+    stn_data = station_data_integrety_checks(station_data, sd, attrs=station_attrs, encoding=station_encoding)
 
     ## geometry from station data
     geometry = stn_data['geometry']
@@ -230,7 +230,10 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
 
     ## Assign the stn data to the main Dataset
     for k, v in stn_data.items():
-        ds1[k] = v
+        if k == 'station_id':
+            ds1 = ds1.assign_coords({k: (('geometry'), [v])})
+        else:
+            ds1 = ds1.assign({k: (('station_id'), [v])})
 
     ## Add attributes and encodings
     for e, val in encoding1.items():
@@ -622,6 +625,9 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
 
     tz_str = 'Etc/GMT{0:+}'
 
+    data_index = list(data_df.index.names)
+    other_index = [i for i in data_index if i != 'time']
+
     ## Iterate through each dataset
     for ds in dataset_list:
         # print(ds['dataset_id'])
@@ -645,7 +651,10 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
         utc_offset = ds_mapping['utc_offset']
         parameter = ds_mapping['parameter']
 
-        ts_data1 = data_df.copy()
+        main_cols = data_index.copy()
+        main_cols.extend([parameter])
+
+        ts_data1 = data_df.reset_index().copy()
 
         # Convert times to local TZ if necessary
         if (not freq_code in ['T', 'H', '1H']) and (not utc_offset == '0H'):
@@ -656,16 +665,16 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
         ## Aggregate data if necessary
         # Parameter
         if freq_code == 'T':
-            grp1 = ts_data1.groupby(['geometry', 'time', 'height'])
+            grp1 = ts_data1.groupby(data_index)
             data1 = grp1[parameter].mean()
 
         else:
             agg_fun = agg_stat_mapping[ds_mapping['aggregation_statistic']]
 
             if agg_fun == 'sum':
-                data1 = grp_ts_agg(ts_data1[['geometry', 'time', 'height', parameter]], ['geometry', 'height'], 'time', freq_code, agg_fun, closed=sum_closed)
+                data1 = grp_ts_agg(ts_data1[main_cols], other_index, 'time', freq_code, agg_fun, closed=sum_closed)
             else:
-                data1 = grp_ts_agg(ts_data1[['geometry', 'time', 'height', parameter]], ['geometry', 'height'], 'time', freq_code, agg_fun, discrete, closed=other_closed)
+                data1 = grp_ts_agg(ts_data1[main_cols], other_index, 'time', freq_code, agg_fun, discrete, closed=other_closed)
 
         # Quality code
         if qual_col in ts_data1.columns:
@@ -673,7 +682,9 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
             if freq_code == 'T':
                 qual1 = grp1[qual_col].min()
             else:
-                qual1 = grp_ts_agg(ts_data1[['geometry', 'time', 'height', qual_col]], ['geometry', 'height'], 'time', freq_code, 'min')
+                qual_cols = data_index.copy()
+                qual_cols.extend([qual_col])
+                qual1 = grp_ts_agg(ts_data1[qual_cols], other_index, 'time', freq_code, 'min')
             df3 = pd.concat([data1, qual1], axis=1).reset_index().dropna()
 
             ancillary_variables.extend([qual_col])
@@ -690,7 +701,7 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
         if (not freq_code in ['T', 'H', '1H']) and (not utc_offset == '0H'):
             df4['time'] = df4['time'].dt.tz_localize(tz1).dt.tz_convert('utc').dt.tz_localize(None)
 
-        df4.set_index(['geometry', 'time', 'height'], inplace=True)
+        df4.set_index(data_index, inplace=True)
 
         new1 = data_to_xarray(df4, station_dict, parameter, attrs1, encoding1, station_attrs=station_attrs, station_encoding=station_encoding, run_date=run_date_key, ancillary_variables=ancillary_variables, compression='zstd')
 
