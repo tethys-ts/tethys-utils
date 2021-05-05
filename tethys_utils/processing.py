@@ -434,14 +434,6 @@ def compare_xrs(old_xr, new_xr, add_old=False):
     parameter = [v for v in vars1 if 'dataset_id' in new_xr[v].attrs][0]
     vars2 = [parameter]
 
-    if not parameter in old_xr:
-        raise ValueError(parameter + ' must be in old_xr')
-
-    on = new_xr[parameter].dims
-
-    if not on == old_xr[parameter].dims:
-        raise ValueError('Dimensions are not the same between the datasets')
-
     ## Determine if there are ancillary variables to pull through
     new_attrs = new_xr[parameter].attrs.copy()
 
@@ -449,9 +441,29 @@ def compare_xrs(old_xr, new_xr, add_old=False):
         av1 = new_attrs['ancillary_variables'].split(' ')
         vars2.extend(av1)
 
+    if not parameter in old_xr:
+        raise ValueError(parameter + ' must be in old_xr')
+
+    new1_s = new_xr[vars2].squeeze()
+    old1_s = old_xr[vars2].squeeze()
+    on = list(new1_s.dims)
+
+    if not on == old1_s.dims:
+        raise ValueError('Dimensions are not the same between the datasets')
+
+    keep_vars = on + vars2
+
+    new_all_vars = list(new1_s.variables)
+    new_bad_vars = [v for v in new_all_vars if not v in keep_vars]
+    new2_s = new1_s.drop(new_bad_vars)
+
+    old_all_vars = list(old1_s.variables)
+    old_bad_vars = [v for v in old_all_vars if not v in keep_vars]
+    old2_s = old1_s.drop(old_bad_vars)
+
     ## Pull out data for comparison
-    old_df = old_xr[vars2].to_dataframe().reset_index()
-    new_df = new_xr[vars2].to_dataframe().reset_index()
+    old_df = new2_s.to_dataframe().reset_index()
+    new_df = old2_s.to_dataframe().reset_index()
 
     ## run comparison
     comp = compare_dfs(old_df, new_df, on, parameter, add_old=add_old)
@@ -466,11 +478,17 @@ def compare_xrs(old_xr, new_xr, add_old=False):
         comp2 = comp.set_index(list(on)).sort_index().to_xarray()
 
         for v in vars1:
-            if v in comp2:
-                comp2[v].attrs = new_xr[v].attrs.copy()
-                comp2[v].encoding = new_xr[v].encoding.copy()
-            else:
+            if v not in comp2:
                 comp2[v] = new_xr[v].copy()
+
+        new_dims = new_xr[parameter].dims
+        dim_dict = dict(comp2.dims)
+        data_shape = tuple(dim_dict[d] for d in new_dims)
+
+        for v in vars2:
+            comp2 = comp2.assign({v: (new_dims, comp2[v].values.reshape(data_shape))})
+            comp2[v].attrs = new_xr[v].attrs.copy()
+            comp2[v].encoding = new_xr[v].encoding.copy()
 
         comp2.attrs = new_xr.attrs.copy()
 
