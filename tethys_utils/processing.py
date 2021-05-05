@@ -129,6 +129,60 @@ def station_data_integrety_checks(data, spatial_distribution, attrs=None, encodi
     return stn_data
 
 
+def metadata_integrety_checks(results_data, station_data, ds_metadata):
+    """
+
+    """
+    sd = ds_metadata['spatial_distribution']
+    geo_type = ds_metadata['geometry_type']
+    grouping = ds_metadata['grouping']
+
+    data_index = list(results_data.index.names)
+    if ('geometry' in data_index) and (sd == 'grid'):
+        raise ValueError('You have passed geometry as an index, but the spatial_distribution is labeled as grid...something is inconsistent.')
+    elif (sd == 'sparse') and (('lon' in data_index) or ('lat' in data_index)):
+        raise ValueError('You have passed lon/lat as an index, but the spatial_distribution is labeled as sparse...something is inconsistent.')
+
+    stn_geometry = station_data['geometry']
+    stn_geo_type = stn_geometry['type']
+
+    if 'geometry' in data_index:
+        data_sd = 'sparse'
+        hex_geo1 = results_data.index.get_level_values('geometry').unique()
+        if len(hex_geo1) == 1:
+            data_grouping = 'none'
+        else:
+            data_grouping = 'blocks'
+
+        data_geometry = wkb.loads(hex_geo1[0], True)
+        data_geo_type = data_geometry.type
+    elif ('lon' in data_index) and ('lat' in data_index):
+        data_sd = 'grid'
+        data_geo_type = 'Point'
+        lons = results_data.index.get_level_values('lon').unique()
+        lats = results_data.index.get_level_values('lat').unique()
+        if (len(lons) == 1) and (len(lats) == 1):
+            data_grouping = 'none'
+        else:
+            data_grouping = 'blocks'
+    else:
+        raise ValueError('Data is not indexed correctly.')
+
+    if data_grouping == 'blocks':
+        if stn_geo_type != 'Polygon':
+            raise ValueError('If the data grouping is "blocks", then the station geometry should be a Polygon rectangle of the extent.')
+    else:
+        if stn_geo_type != data_geo_type:
+            raise ValueError('If the data grouping is "none", then the station geometry should be the same as the data geometry.')
+
+    if data_geo_type != geo_type:
+        raise ValueError('The data geometry type does not match the geometry type listed in the dataset metadata.')
+    if data_grouping != grouping:
+        raise ValueError('The data grouping does not match the grouping listed in the dataset metadata.')
+    if data_sd != sd:
+        raise ValueError('The data spatial distribution does not match the spatial distribution listed in the dataset metadata.')
+
+
 def data_to_xarray(results_data, station_data, param_name, results_attrs, results_encoding, station_attrs=None, station_encoding=None, virtual_station=False, run_date=None, ancillary_variables=None, compression=False, compress_level=1):
     """
     Converts DataFrames of time series data, station data, and other attributes to an Xarray Dataset. Optionally has Zstandard compression.
@@ -159,6 +213,7 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
     param_name = ds_mapping['parameter']
     sd = ds_mapping['spatial_distribution']
     grouping = ds_mapping['grouping']
+    geo_type = ds_mapping['geometry_type']
 
     ## Integrity Checks
 
@@ -168,11 +223,14 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
     # Station data
     stn_data = station_data_integrety_checks(station_data, sd, attrs=station_attrs, encoding=station_encoding)
 
+    # Metadata
+    metadata_integrety_checks(ts_data1, stn_data, ds_mapping)
+
     ## geometry from station data
-    geometry = stn_data['geometry']
-    if grouping == 'blocks':
-        stn_data['extent'] = shape(geometry).wkt
+    stn_geometry = stn_data['geometry']
     stn_data.pop('geometry')
+    if grouping == 'blocks':
+        stn_data['extent'] = shape(stn_geometry).wkt
 
     ## Station properties
     if 'properties' in stn_data:
@@ -182,7 +240,7 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
         stn_data.pop('properties')
 
     ## Assign Attributes
-    attrs1 = {'station_id': {'cf_role': "timeseries_id", 'virtual_station': virtual_station}, 'virtual_station': {'long_name': 'Is this station a virtual or modeled station?'}, 'lat': {'standard_name': "latitude", 'units': "degrees_north"}, 'lon': {'standard_name': "longitude", 'units': "degrees_east"}, 'altitude': {'standard_name': 'surface_altitude', 'long_name': 'height above the geoid to the lower boundary of the atmosphere', 'units': 'm'}, 'geometry': {'long_name': 'The hexadecimal encoding of the Well-Known Binary (WKB) geometry', 'crs_EPSG': 4326}}
+    attrs1 = {'station_id': {'cf_role': "timeseries_id"}, 'lat': {'standard_name': "latitude", 'units': "degrees_north"}, 'lon': {'standard_name': "longitude", 'units': "degrees_east"}, 'altitude': {'standard_name': 'surface_altitude', 'long_name': 'height above the geoid to the lower boundary of the atmosphere', 'units': 'm'}, 'geometry': {'long_name': 'The hexadecimal encoding of the Well-Known Binary (WKB) geometry', 'crs_EPSG': 4326}}
 
     if 'name' in stn_data.keys():
         attrs1.update({'name': {'long_name': 'station name'}})
@@ -226,14 +284,38 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
         encoding1.update({'modified_date': {'_FillValue': -99999999, 'units': "days since 1970-01-01 00:00:00"}})
 
     ## Create the Xarray Dataset
+    data_index = list(ts_data1.index.names)
     ds1 = ts_data1.to_xarray()
 
     ## Assign the stn data to the main Dataset
+    if 'extent' in stn_data:
+        ds1 = ds1.assign_coords({'extent': [stn_data['extent']]})
+        stn_data.pop('extent')
+
+    if 'extent' in ds1:
+        stn_index = ('extent')
+    else:
+        if 'geometry' in data_index:
+            stn_index = ('geometry')
+        else:
+            stn_index = ('lon', 'lat')
+
+    ds1 = ds1.assign_coords({'station_id': (stn_index, [stn_data['station_id']])})
+    stn_data.pop('station_id')
+
     for k, v in stn_data.items():
-        if k == 'station_id':
-            ds1 = ds1.assign_coords({k: (('geometry'), [v])})
+        if k == 'altitude':
+            if 'geometry' in data_index:
+                ds1 = ds1.assign({k: (('geometry'), [v])})
+            else:
+                ds1 = ds1.assign({k: (('lon', 'lat'), [v])})
         else:
             ds1 = ds1.assign({k: (('station_id'), [v])})
+
+    ## Assign the lat and lon if the data are sparse points
+    if ('geometry' in data_index) and (stn_geometry['type'] == 'Point'):
+        ds1 = ds1.assign({'lon': (('geometry'), [stn_geometry['coordinates'][0]])})
+        ds1 = ds1.assign({'lat': (('geometry'), [stn_geometry['coordinates'][1]])})
 
     ## Add attributes and encodings
     for e, val in encoding1.items():
@@ -625,7 +707,15 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
 
     tz_str = 'Etc/GMT{0:+}'
 
+    ## Determine index
+    if not isinstance(data_df.index, pd.MultiIndex):
+        raise TypeError('The data_df index must be a MultiIndex.')
+
     data_index = list(data_df.index.names)
+
+    if not 'time' in data_index:
+        raise ValueError('time must be in the data_df index.')
+
     other_index = [i for i in data_index if i != 'time']
 
     ## Iterate through each dataset
