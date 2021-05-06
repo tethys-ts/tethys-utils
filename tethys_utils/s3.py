@@ -11,10 +11,13 @@ import pandas as pd
 import xarray as xr
 import orjson
 from tethys_utils.data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats, StationBase
+# from data_models import Geometry, Dataset, DatasetBase, S3ObjectKey, Station, Stats, StationBase
 from multiprocessing.pool import ThreadPool, Pool
 from tethysts.utils import key_patterns, get_object_s3, s3_connection, read_json_zstd, read_pkl_zstd
 from tethys_utils.misc import make_run_date_key, write_json_zstd, write_pkl_zstd
+# from misc import make_run_date_key, write_json_zstd, write_pkl_zstd
 from tethys_utils.processing import compare_xrs, process_station_summ
+# from processing import compare_xrs, process_station_summ
 from datetime import date, datetime
 
 ############################################
@@ -314,7 +317,7 @@ def compare_datasets_from_s3(conn_config, bucket, new_data, add_old=False, last_
     dataset = [new_data[v].attrs for v in vars1 if 'dataset_id' in new_data[v].attrs][0]
     dataset_id = dataset['dataset_id']
     # result_type = dataset['result_type']
-    station_id = str(new_data['station_id'].values)
+    station_id = str(new_data['station_id'].values[0])
 
     key_dict = {'dataset_id': dataset_id, 'station_id': station_id}
 
@@ -336,7 +339,6 @@ def compare_datasets_from_s3(conn_config, bucket, new_data, add_old=False, last_
         # last_key = last_key1.iloc[0]['Key']
         p_old_one = get_object_s3(last_key, conn_config, bucket, 'zstd')
         xr_old_one = xr.load_dataset(p_old_one)
-        xr_old_one['time'] = xr_old_one['time'].dt.round('s')
 
         up1 = compare_xrs(xr_old_one, new_data, add_old=add_old)
     else:
@@ -381,11 +383,6 @@ def update_results_s3(processing_code, data_dict, run_date_dict, remote, threads
     else:
         raise ValueError('processing_code does not exist.')
 
-    # if processing_code in [3]:
-    #     read_buffer = True
-    # else:
-    #     read_buffer = False
-
     if processing_code in [4, 5]:
         no_comparison = True
     else:
@@ -422,7 +419,7 @@ def update_results_s3(processing_code, data_dict, run_date_dict, remote, threads
                 print('Data could not be opened')
                 return None
 
-            stn_id = str(new1['station_id'].values)
+            stn_id = str(new1['station_id'].values[0])
             print('station_id: ' + stn_id)
 
             vars1 = list(new1.variables)
@@ -441,7 +438,7 @@ def update_results_s3(processing_code, data_dict, run_date_dict, remote, threads
                 else:
                     last_date_key = make_run_date_key(last_date_key_df['KeyDate'].iloc[0])
 
-                up1 = compare_datasets_from_s3(conn_config, bucket, new1, add_old=add_old, read_buffer=False, last_run_date_key=last_date_key, public_url=public_url)
+                up1 = compare_datasets_from_s3(conn_config, bucket, new1, add_old=add_old, last_run_date_key=last_date_key, public_url=public_url)
 
             ## Save results
             if isinstance(up1, xr.Dataset) and (len(up1[parameter].time) > 0):
@@ -474,8 +471,7 @@ def update_results_s3(processing_code, data_dict, run_date_dict, remote, threads
                 ## Final station processing and saving
                 stn_m = process_station_summ(ds_id, stn_id, up1, info1, mod_date=mod_date_key)
 
-                stn4 = orjson.loads(stn_m.json(exclude_none=True))
-                up_stns = put_remote_station(s3, bucket, stn4, run_date=mod_date_key)
+                up_stns = put_remote_station(s3, bucket, stn_m, run_date=mod_date_key)
 
             else:
                 print('No new data to update')

@@ -12,12 +12,12 @@ import pandas as pd
 import copy
 import orjson
 from hashlib import blake2b
-# from tethys_utils.data_models import Geometry, Dataset, DatasetBase, Station, Stats, StationBase
-from data_models import Geometry, Dataset, DatasetBase, Station, Stats, StationBase
-# from tethys_utils.misc import make_run_date_key, grp_ts_agg, write_pkl_zstd
-from misc import make_run_date_key, grp_ts_agg, write_pkl_zstd
+from tethys_utils.data_models import Geometry, Dataset, DatasetBase, Station, Stats, StationBase
+# from data_models import Geometry, Dataset, DatasetBase, Station, Stats, StationBase
+from tethys_utils.misc import make_run_date_key, grp_ts_agg, write_pkl_zstd
+# from misc import make_run_date_key, grp_ts_agg, write_pkl_zstd
 import geojson
-from shapely.geometry import shape
+from shapely.geometry import shape, mapping
 from shapely import wkb
 
 ############################################
@@ -230,7 +230,7 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
     stn_geometry = stn_data['geometry']
     stn_data.pop('geometry')
     if grouping == 'blocks':
-        stn_data['extent'] = shape(stn_geometry).wkt
+        stn_data['extent'] = shape(stn_geometry).wkb_hex
 
     ## Station properties
     if 'properties' in stn_data:
@@ -240,7 +240,7 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
         stn_data.pop('properties')
 
     ## Assign Attributes
-    attrs1 = {'station_id': {'cf_role': "timeseries_id"}, 'lat': {'standard_name': "latitude", 'units': "degrees_north"}, 'lon': {'standard_name': "longitude", 'units': "degrees_east"}, 'altitude': {'standard_name': 'surface_altitude', 'long_name': 'height above the geoid to the lower boundary of the atmosphere', 'units': 'm'}, 'geometry': {'long_name': 'The hexadecimal encoding of the Well-Known Binary (WKB) geometry', 'crs_EPSG': 4326}}
+    attrs1 = {'station_id': {'cf_role': "timeseries_id"}, 'lat': {'standard_name': "latitude", 'units': "degrees_north"}, 'lon': {'standard_name': "longitude", 'units': "degrees_east"}, 'altitude': {'standard_name': 'surface_altitude', 'long_name': 'height above the geoid to the lower boundary of the atmosphere', 'units': 'm'}, 'geometry': {'long_name': 'The hexadecimal encoding of the Well-Known Binary (WKB) geometry', 'crs_EPSG': 4326}, 'extent': {'long_name': 'The hexadecimal encoding of the Well-Known Binary (WKB) station extent', 'crs_EPSG': 4326}}
 
     if 'name' in stn_data.keys():
         attrs1.update({'name': {'long_name': 'station name'}})
@@ -444,11 +444,12 @@ def compare_xrs(old_xr, new_xr, add_old=False):
     if not parameter in old_xr:
         raise ValueError(parameter + ' must be in old_xr')
 
+    ## Reduce the dimensions for the comparison for compatibility
     new1_s = new_xr[vars2].squeeze()
     old1_s = old_xr[vars2].squeeze()
     on = list(new1_s.dims)
 
-    if not on == old1_s.dims:
+    if not on == list(old1_s.dims):
         raise ValueError('Dimensions are not the same between the datasets')
 
     keep_vars = on + vars2
@@ -461,9 +462,18 @@ def compare_xrs(old_xr, new_xr, add_old=False):
     old_bad_vars = [v for v in old_all_vars if not v in keep_vars]
     old2_s = old1_s.drop(old_bad_vars)
 
+    # Fix datetime rounding issues...
+    for v in list(old2_s.variables):
+        if old2_s[v].dtype.name == 'datetime64[ns]':
+            old2_s[v] = old2_s[v].dt.round('s')
+
+    for v in list(new2_s.variables):
+        if new2_s[v].dtype.name == 'datetime64[ns]':
+            new2_s[v] = new2_s[v].dt.round('s')
+
     ## Pull out data for comparison
-    old_df = new2_s.to_dataframe().reset_index()
-    new_df = old2_s.to_dataframe().reset_index()
+    old_df = old2_s.to_dataframe().reset_index()
+    new_df = new2_s.to_dataframe().reset_index()
 
     ## run comparison
     comp = compare_dfs(old_df, new_df, on, parameter, add_old=add_old)
@@ -477,9 +487,16 @@ def compare_xrs(old_xr, new_xr, add_old=False):
         ## Repackage into netcdf
         comp2 = comp.set_index(list(on)).sort_index().to_xarray()
 
+        # Fix datetime rounding issues...
+        for v in list(comp2.variables):
+            if comp2[v].dtype.name == 'datetime64[ns]':
+                comp2[v] = comp2[v].dt.round('s')
+
         for v in vars1:
-            if v not in comp2:
+            if v not in vars2:
                 comp2[v] = new_xr[v].copy()
+                comp2[v].attrs = new_xr[v].attrs.copy()
+                comp2[v].encoding = new_xr[v].encoding.copy()
 
         new_dims = new_xr[parameter].dims
         dim_dict = dict(comp2.dims)
@@ -491,6 +508,7 @@ def compare_xrs(old_xr, new_xr, add_old=False):
             comp2[v].encoding = new_xr[v].encoding.copy()
 
         comp2.attrs = new_xr.attrs.copy()
+        comp2.encoding = new_xr.encoding.copy()
 
         return comp2
 
@@ -671,24 +689,34 @@ def get_station_data_from_xr(data):
         data_vars.extend(ancillary_variables)
 
     stn_fields = list(StationBase.schema()['properties'].keys())
-    stn_fields.extend(['lon', 'lat'])
 
-    stn_vars = [v for v in vars1 if (not v in dims1) and (not v in data_vars)]
-    stn_data1 = {k: v['data'] for k, v in data[stn_vars].to_dict()['data_vars'].items() if k in stn_fields}
-    stn_data1['geometry'] = geojson.Point([stn_data1['lon'], stn_data1['lat']], True)
-    stn_data1.pop('lon')
-    stn_data1.pop('lat')
-    stn_data1['altitude'] = round(stn_data1['altitude'], 3)
-    if not 'virtual_station' in stn_data1:
-        stn_data1['virtual_station'] = False
+    ## Geometry
+    if 'geometry' in dims1:
+        if len(data['geometry']) == 1:
+            geo1 = mapping(wkb.loads(data['geometry'].values[0], True))
+        else:
+            geo1 = mapping(wkb.loads(data['extent'].values[0], True))
+
+        stn_fields.remove('geometry')
+
+    lat_lon = ['lon', 'lat']
+
+    stn_vars = [v for v in vars1 if (not v in dims1) and (not v in data_vars) and (not v in lat_lon)]
+    stn_data1 = {k: v['data'][0] for k, v in data[stn_vars].to_dict()['data_vars'].items() if k in stn_fields}
+    stn_data1.update({'station_id': data['station_id'].values[0], 'geometry': geo1})
+    if 'altitude' in stn_data1:
+        stn_data1['altitude'] = round(stn_data1['altitude'], 3)
+    # if not 'virtual_station' in stn_data1:
+    #     stn_data1['virtual_station'] = False
 
     props = {s: {'data': data[s].to_dict()['data'], 'attrs': data[s].to_dict()['attrs']} for s in stn_vars if s not in stn_fields}
-    stn_data1['properties'] = props
+    if props:
+        stn_data1['properties'] = props
 
     ## Check model
     stn_m = StationBase(**stn_data1)
 
-    return stn_data1
+    return stn_m.dict(exclude_none=True)
 
 
 def process_station_summ(dataset_id, station_id, data, object_infos, mod_date=None):
@@ -710,10 +738,12 @@ def process_station_summ(dataset_id, station_id, data, object_infos, mod_date=No
 
     station_m = Station(**stn_dict2)
 
-    return station_m
+    stn_dict = orjson.loads(station_m.json(exclude_none=True))
+
+    return stn_dict
 
 
-def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key, mod_date=None, sum_closed='right', other_closed='left', discrete=True, station_attrs=None, station_encoding=None):
+def prepare_results(data_dict, dataset_list, station_data, results_data, run_date_key, mod_date=None, sum_closed='right', other_closed='left', discrete=True, station_attrs=None, station_encoding=None):
     """
 
     """
@@ -726,10 +756,10 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
     tz_str = 'Etc/GMT{0:+}'
 
     ## Determine index
-    if not isinstance(data_df.index, pd.MultiIndex):
+    if not isinstance(results_data.index, pd.MultiIndex):
         raise TypeError('The data_df index must be a MultiIndex.')
 
-    data_index = list(data_df.index.names)
+    data_index = list(results_data.index.names)
 
     if not 'time' in data_index:
         raise ValueError('time must be in the data_df index.')
@@ -762,7 +792,7 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
         main_cols = data_index.copy()
         main_cols.extend([parameter])
 
-        ts_data1 = data_df.reset_index().copy()
+        ts_data1 = results_data.reset_index().copy()
 
         # Convert times to local TZ if necessary
         if (not freq_code in ['T', 'H', '1H']) and (not utc_offset == '0H'):
@@ -811,7 +841,7 @@ def prepare_results(data_dict, dataset_list, station_dict, data_df, run_date_key
 
         df4.set_index(data_index, inplace=True)
 
-        new1 = data_to_xarray(df4, station_dict, parameter, attrs1, encoding1, station_attrs=station_attrs, station_encoding=station_encoding, run_date=run_date_key, ancillary_variables=ancillary_variables, compression='zstd')
+        new1 = data_to_xarray(df4, station_data, parameter, attrs1, encoding1, station_attrs=station_attrs, station_encoding=station_encoding, run_date=run_date_key, ancillary_variables=ancillary_variables, compression='zstd')
 
         ## Update the data_dict
         ds_id = ds_mapping['dataset_id']
