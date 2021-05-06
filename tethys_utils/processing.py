@@ -300,22 +300,16 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
         else:
             stn_index = ('lon', 'lat')
 
-    ds1 = ds1.assign_coords({'station_id': (stn_index, [stn_data['station_id']])})
-    stn_data.pop('station_id')
+    # ds1 = ds1.assign_coords({'station_id': (stn_index, [stn_data['station_id']])})
+    # stn_data.pop('station_id')
 
     for k, v in stn_data.items():
-        if k == 'altitude':
-            if 'geometry' in data_index:
-                ds1 = ds1.assign({k: (('geometry'), [v])})
-            else:
-                ds1 = ds1.assign({k: (('lon', 'lat'), [v])})
-        else:
-            ds1 = ds1.assign({k: (('station_id'), [v])})
+        ds1 = ds1.assign({k: (stn_index, [v])})
 
     ## Assign the lat and lon if the data are sparse points
     if ('geometry' in data_index) and (stn_geometry['type'] == 'Point'):
-        ds1 = ds1.assign({'lon': (('geometry'), [stn_geometry['coordinates'][0]])})
-        ds1 = ds1.assign({'lat': (('geometry'), [stn_geometry['coordinates'][1]])})
+        ds1 = ds1.assign({'lon': (stn_index, [stn_geometry['coordinates'][0]])})
+        ds1 = ds1.assign({'lat': (stn_index, [stn_geometry['coordinates'][1]])})
 
     ## Add attributes and encodings
     for e, val in encoding1.items():
