@@ -348,7 +348,7 @@ def compare_datasets_from_s3(conn_config, bucket, new_data, add_old=False, last_
     return up1
 
 
-def update_results_s3(processing_code, data_dict, run_date_dict, remote, threads=20, public_url=None):
+def update_results_s3(processing_code, data_dict, run_date_dict, remote, threads=30, public_url=None):
     """
     Parameters
     ----------

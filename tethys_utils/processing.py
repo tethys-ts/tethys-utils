@@ -88,19 +88,14 @@ def results_data_integrety_checks(data, param_name, attrs, encoding, spatial_dis
     return data
 
 
-def station_data_integrety_checks(data, spatial_distribution, attrs=None, encoding=None):
+def station_data_integrety_checks(data, attrs=None, encoding=None):
     """
 
     """
     stn_m = StationBase(**data)
     stn_data = orjson.loads(stn_m.json(exclude_none=True))
 
-    if spatial_distribution == 'sparse':
-        essential_keys = ['geometry', 'station_id']
-    elif spatial_distribution == 'grid':
-        essential_keys = ['lon', 'lat', 'station_id']
-    else:
-        raise ValueError('spatial_distribution should be either sparse or grid.')
+    essential_keys = ['geometry', 'station_id']
 
     for c in essential_keys:
         if not c in stn_data:
@@ -183,7 +178,7 @@ def metadata_integrety_checks(results_data, station_data, ds_metadata):
         raise ValueError('The data spatial distribution does not match the spatial distribution listed in the dataset metadata.')
 
 
-def data_to_xarray(results_data, station_data, param_name, results_attrs, results_encoding, station_attrs=None, station_encoding=None, virtual_station=False, run_date=None, ancillary_variables=None, compression=False, compress_level=1):
+def data_to_xarray(results_data, station_data, param_name, results_attrs, results_encoding, station_attrs=None, station_encoding=None, run_date=None, ancillary_variables=None, compression=False, compress_level=1):
     """
     Converts DataFrames of time series data, station data, and other attributes to an Xarray Dataset. Optionally has Zstandard compression.
 
@@ -221,7 +216,7 @@ def data_to_xarray(results_data, station_data, param_name, results_attrs, result
     ts_data1 = results_data_integrety_checks(results_data, param_name, results_attrs, results_encoding, sd, ancillary_variables)
 
     # Station data
-    stn_data = station_data_integrety_checks(station_data, sd, attrs=station_attrs, encoding=station_encoding)
+    stn_data = station_data_integrety_checks(station_data, attrs=station_attrs, encoding=station_encoding)
 
     # Metadata
     metadata_integrety_checks(ts_data1, stn_data, ds_mapping)
@@ -841,167 +836,6 @@ def prepare_results(data_dict, dataset_list, station_data, results_data, run_dat
         ds_id = ds_mapping['dataset_id']
 
         data_dict[ds_id].append(new1)
-
-
-def split_grid(arr, x_size, y_size, x_name='x', y_name='y'):
-    """
-    Function to split an n-dimensional dataset along the x and y dimensions.
-
-    Parameters
-    ----------
-    arr : DataArray
-        An xarray DataArray with at least x and y dimensions. It can have any number of dimensions, though it probably does not make much sense to have greater than 4 dimensions.
-    x_size : int
-        The size or length of the smaller grids in the x dimension.
-    y_size : int
-        The size or length of the smaller grids in the y dimension.
-    x_name : str
-        The x dimension name.
-    y_name : str
-        The y dimension name.
-
-    Returns
-    -------
-    List of DataArrays
-        The result contains none of the original attributes.
-    """
-    ## Get the dimension data
-    dims = arr.dims
-    x_index = dims.index(x_name)
-    y_index = dims.index(y_name)
-    data_name = arr.name
-
-    arr_shape = arr.shape
-
-    m = arr_shape[x_index]
-    n = arr_shape[y_index]
-    dtype = arr.dtype
-
-    ## Build the new regular array to be queried
-    y_diff = arr[y_name].diff(y_name, 1).median().values
-    x_diff = arr[x_name].diff(x_name, 1).median().values
-
-    bpx = ((m-1)//x_size + 1) # blocks per x
-    bpy = ((n-1)//y_size + 1) # blocks per y
-    M = x_size * bpx
-    N = y_size * bpy
-
-    x_y = list(arr_shape)
-    x_y[x_index] = M
-    x_y[y_index] = N
-
-    sel1 = tuple(slice(0, s) for s in arr_shape)
-
-    A = np.nan * np.ones(x_y)
-    A[sel1] = arr
-
-    # x array
-    x_start = arr[x_name][0].values
-    x_int = M * x_diff
-    x_end = x_start + x_int
-    xs = np.arange(x_start, x_end, x_diff)
-
-    # y array
-    y_start = arr[y_name][0].values
-    y_int = M * y_diff
-    y_end = y_start + y_int
-    ys = np.arange(y_start, y_end, y_diff)
-
-    # Coords
-    coords = []
-    new_dims = []
-    for d in dims:
-        name = d
-        if d == x_name:
-            c = xs
-        elif d == y_name:
-            c = ys
-        else:
-            c = arr[d]
-        coords.extend([c])
-        new_dims.extend([name])
-
-    # New DataArray
-    A1 = xr.DataArray(A, coords=coords, dims=new_dims, name=data_name)
-
-    block_list = []
-    previous_x = 0
-    for x_block in range(bpy):
-        previous_x = x_block * x_size
-        previous_y = 0
-        for y_block in range(bpx):
-            previous_y = y_block * y_size
-            x_slice = slice(previous_x, previous_x+x_size)
-            y_slice = slice(previous_y, previous_y+y_size)
-
-            sel2 = list(sel1)
-            sel2[x_index] = x_slice
-            sel2[y_index] = y_slice
-
-            block = A1[tuple(sel2)]
-
-            # remove nans
-            block = block.dropna(y_name, 'all')
-            block = block.dropna(x_name, 'all')
-
-            ## append
-            if block.size:
-                block_list.append(block.astype(dtype))
-
-    return block_list
-
-
-def determine_array_size(arr, starting_x_size=100, starting_y_size=100, increment=100, min_size=800, max_size=1100, x_name='x', y_name='y'):
-    """
-    Function to determine the appropriate grid size for splitting.
-
-    Parameters
-    ----------
-    arr : DataArray
-        An xarray DataArray with at least x and y dimensions. It can have any number of dimensions, though it probably does not make much sense to have greater than 4 dimensions.
-    starting_x_size : int
-        The initial size or length of the smaller grids in the x dimension.
-    starting_y_size : int
-        The initial size or length of the smaller grids in the y dimension.
-    increment : int
-        The incremental grid size to be added iteratively to the starting sizes.
-    min_size : int
-        The minimum acceptable object size in KB.
-    max_size : int
-        The maximum acceptable object size in KB.
-    x_name : str
-        The x dimension name.
-    y_name : str
-        The y dimension name.
-
-    Returns
-    -------
-    dict
-        Of the optimised grid size results.
-    """
-    max_obj_size = 0
-    x_size = starting_x_size
-    y_size = starting_y_size
-
-    while True:
-        block_list = split_grid(arr, x_size=x_size, y_size=y_size, x_name=x_name, y_name=y_name)
-        obj_sizes = [len(write_pkl_zstd(nc.to_netcdf())) for nc in block_list]
-        max_obj_size = max(obj_sizes)
-
-        if max_obj_size < min_size*1000:
-            x_size = x_size + increment
-            y_size = y_size + increment
-        else:
-            break
-
-    if max_obj_size > max_size*1000:
-        print('max_object_size:', str(max_obj_size))
-        raise ValueError('max object size is greater than the allotted size. Reduce the increment value and start again.')
-
-    obj_dict = {'x_size': x_size, 'y_size': y_size, 'max_obj_size': max_obj_size, 'min_obj_size': min(obj_sizes), 'sum_obj_size': sum(obj_sizes), 'len_obj': len(obj_sizes)}
-
-    return obj_dict
-
 
 
 

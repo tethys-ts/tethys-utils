@@ -32,7 +32,7 @@ class Geometry(BaseModel):
     Geojson-like geometry model.
     """
     type: str
-    coordinates: List[float]
+    coordinates: Union[List[float], List[list]]
 
 
 class S3ObjectKey(BaseModel):

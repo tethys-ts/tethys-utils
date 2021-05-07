@@ -277,5 +277,5 @@ ds2 = xr.combine_by_coords(ds1)
 
 
 
-
+self = Raster(path_str)
 
